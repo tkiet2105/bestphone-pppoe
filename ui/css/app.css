@@ -146,3 +146,32 @@ pre.export-text {
 .nic-tile .tag.no-link { background: #475569; color: #cbd5e1; }
 .nic-tile .tag.pado { background: #f59e0b; color: #000; }
 .nic-tile .tag.line { background: #7c3aed; color: #fff; }
+
+.api-group { margin-bottom: 24px; }
+.api-group h3 { margin: 0 0 8px; font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
+.api-row {
+  background: #0f172a; border: 1px solid #334155; border-radius: 6px;
+  margin-bottom: 8px; padding: 10px 14px;
+}
+.api-row .method {
+  display: inline-block; font-family: 'SF Mono', Monaco, monospace; font-weight: 700;
+  padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-right: 8px;
+  min-width: 50px; text-align: center;
+}
+.api-row .method.GET { background: #16a34a; color: #fff; }
+.api-row .method.POST { background: #2563eb; color: #fff; }
+.api-row .method.PUT { background: #ca8a04; color: #fff; }
+.api-row .method.DELETE { background: #dc2626; color: #fff; }
+.api-row .path { font-family: 'SF Mono', Monaco, monospace; font-size: 13px; color: #f1f5f9; }
+.api-row .desc { margin-top: 4px; font-size: 12px; color: #94a3b8; }
+.api-row .extras { margin-top: 6px; }
+.api-row pre {
+  background: #020617; border: 1px solid #1e293b; border-radius: 4px;
+  padding: 8px 10px; font-family: 'SF Mono', Monaco, monospace; font-size: 11px;
+  overflow-x: auto; white-space: pre-wrap; margin: 4px 0;
+}
+.api-row .row-actions { display: flex; gap: 6px; margin-top: 4px; }
+.api-row button { padding: 4px 10px; font-size: 11px; }
+.api-search {
+  width: 100%; max-width: 480px; margin-bottom: 16px;
+}

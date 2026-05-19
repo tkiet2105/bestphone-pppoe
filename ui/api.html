@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>API — bestphone-pppoe</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <main>
+    <div class="card">
+      <h2>REST API <span class="muted small" id="api-version"></span></h2>
+      <p class="muted small">
+        Base: <span class="mono">/api/v1</span> · Auth: header <span class="mono">Authorization: Bearer &lt;token&gt;</span>
+        (hoặc query <span class="mono">?token=...</span> cho SSE). Response chuẩn:
+        <span class="mono">{ "success": true, "data": ... }</span> hoặc <span class="mono">{ "success": false, "error": "..." }</span>.
+      </p>
+      <input class="api-search" id="api-search" placeholder="Tìm endpoint (path, method, mô tả)..." oninput="filterApi()">
+    </div>
+    <div id="api-content"></div>
+  </main>
+  <script src="/js/api-client.js"></script>
+  <script src="/js/api-page.js"></script>
+</body>
+</html>

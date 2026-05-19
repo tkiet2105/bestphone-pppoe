@@ -136,6 +136,7 @@ function renderNav(active) {
         <a href="/lines.html" class="${active==='lines'?'active':''}">Lines</a>
         <a href="/sessions.html" class="${active==='sessions'?'active':''}">Sessions</a>
         <a href="/export.html" class="${active==='export'?'active':''}">Export</a>
+        <a href="/api.html" class="${active==='api'?'active':''}">API</a>
       </nav>
       <span class="spacer"></span>
       <span class="muted small" id="conn-status">●</span>
