@@ -257,11 +257,17 @@ async function submitBulk() {
   }
   if (!creds.length) { Toast.error('Cần ít nhất 1 cred'); return; }
   try {
-    Toast.info(`Bulk ${creds.length} sessions — chạy nền...`);
+    Toast.info(`Bulk ${creds.length} sessions — chạy nền (mỗi dial ~30s)...`);
     const r = await Api.bulkCreateSessions(lineId, { count: creds.length, creds });
-    const ok = r.filter(x => x.status === 'connected').length;
-    const err = r.filter(x => x.status === 'error').length;
-    Toast.success(`Bulk: ${ok} connected · ${err} error / ${r.length}`);
+    const connected = r.filter(x => x.status === 'connected').length;
+    const errored = r.filter(x => x.status === 'error').length;
+    const created = r.filter(x => x.session_id > 0).length;
+    Toast.success(`Bulk: ${created}/${r.length} created in DB · ${connected} connected · ${errored} dial-fail`);
+    if (errored > 0) {
+      // Show distinct error messages cho user
+      const errMsgs = [...new Set(r.filter(x => x.error).map(x => x.error))];
+      errMsgs.slice(0, 3).forEach(m => Toast.info('Lý do: ' + m));
+    }
     closeModal('bulk-sess-modal');
     loadSessions();
   } catch (e) { Toast.error('Bulk: ' + e.message); }

@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -71,6 +72,7 @@ func CreateLineSessionsBulk(c *gin.Context) {
 	}
 	type result struct {
 		SessionId uint   `json:"session_id"`
+		Username  string `json:"username"`
 		Status    string `json:"status"`
 		Error     string `json:"error,omitempty"`
 	}
@@ -81,15 +83,38 @@ func CreateLineSessionsBulk(c *gin.Context) {
 		go func(idx int) {
 			defer wg.Done()
 			sess, _, err := createSessionAndDial(line, req.Creds[idx])
-			if err != nil {
-				out[idx] = result{Status: "error", Error: err.Error()}
-				return
+			r := result{Username: req.Creds[idx].Username}
+			if sess != nil {
+				r.SessionId = sess.Id
+				r.Status = sess.Status
 			}
-			out[idx] = result{SessionId: sess.Id, Status: sess.Status}
+			if err != nil {
+				r.Status = "error"
+				r.Error = truncateErr(err.Error(), 240)
+			}
+			out[idx] = r
 		}(i)
 	}
 	wg.Wait()
 	ok(c, out)
+}
+
+// truncateErr — cắt error message dài (pppd verbose log) + extract AuthNak hint.
+func truncateErr(s string, n int) string {
+	low := strings.ToLower(s)
+	if strings.Contains(low, "authnak") || strings.Contains(low, "authentication failed") {
+		return "PAP AuthNak — cred không khớp BRAS (cred fake hoặc sai)"
+	}
+	if strings.Contains(low, "no pado") || strings.Contains(low, "timeout") {
+		return "No PADO — NIC không nhận PPPoE upstream (cáp chưa cắm hoặc sai port)"
+	}
+	if strings.Contains(low, "iface") && strings.Contains(low, "did not come up") {
+		return "iface không lên UP — pppd dial fail (xem last_error chi tiết)"
+	}
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 func createSessionAndDial(line models.Line, req createSessionReq) (*models.Session, *models.Proxy, error) {

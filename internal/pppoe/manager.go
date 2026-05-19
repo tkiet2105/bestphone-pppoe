@@ -93,8 +93,9 @@ func (m *Manager) Dial(sessionID uint) error {
 		if errMsg == "" {
 			errMsg = err.Error()
 		}
-		m.setStatus(&sess, models.StatusError, "pppd: "+truncate(errMsg, 200))
-		return fmt.Errorf("pppd: %w (%s)", err, errMsg)
+		shortMsg := classifyPppdError(errMsg)
+		m.setStatus(&sess, models.StatusError, shortMsg)
+		return fmt.Errorf("pppd: %s", shortMsg)
 	}
 
 	// Poll iface ppp<unit> UP
@@ -286,4 +287,32 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// classifyPppdError — extract short hint từ pppd verbose log.
+// Helper để DB last_error ngắn gọn + user dễ debug.
+func classifyPppdError(raw string) string {
+	low := strings.ToLower(raw)
+	switch {
+	case strings.Contains(low, "authnak"), strings.Contains(low, "authentication failed"):
+		return "AuthNak (cred không khớp BRAS)"
+	case strings.Contains(low, "service-name") && strings.Contains(low, "padt"):
+		return "PADT (BRAS terminate session)"
+	case strings.Contains(low, "no service") || strings.Contains(low, "service-name unmatched"):
+		return "Service-Name không khớp BRAS"
+	case strings.Contains(low, "signal: killed"):
+		// Trường hợp pppd bị context cancel — thường là PADI/PADO/PAP không xong trong 30s
+		if strings.Contains(low, "recv pppoe discovery v1t1 pado") {
+			return "PADO received but PAP timeout (cred bất hợp lệ hoặc BRAS không respond auth)"
+		}
+		if strings.Contains(low, "send pppoe discovery v1t1 padi") {
+			return "PADI sent, no PADO response (NIC không nối BRAS hoặc cáp lỏng)"
+		}
+		return "pppd timeout (context killed)"
+	case strings.Contains(low, "no buffer space"):
+		return "kernel buffer full"
+	default:
+		// Fallback: cắt 200 ký tự
+		return truncate(strings.ReplaceAll(raw, "\n", " | "), 200)
+	}
 }
