@@ -13,7 +13,7 @@ rsync -a --delete --exclude '.git' "$SRC/" "$DST/"
 # Cache-bust trên html: thay /js/foo.js → /js/foo.js?v=<ts>, /css/x.css → /css/x.css?v=<ts>
 TS=$(date +%s)
 find "$DST" -maxdepth 1 -name "*.html" -print0 | while IFS= read -r -d '' f; do
-  sed -i -E "s|(/(js|css)/[^\"' ]+\\.(js|css))(\\?v=[0-9]+)?|\\1?v=$TS|g" "$f"
+  sed -i -E "s#(/(js|css)/[^\"' ]+\\.(js|css))(\\?v=[0-9]+)?#\\1?v=$TS#g" "$f"
 done
 
 echo "[deploy-ui] synced $SRC → $DST (v=$TS)"
