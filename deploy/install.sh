@@ -50,16 +50,16 @@ export PATH=$PATH:/usr/local/go/bin
 
 # ── 4. Clone repo ────────────────────────────────────────────────────────────
 log "Step 4: clone/pull repo"
-AUTH_OPT=""
+GIT_ARGS=()
 if [ -n "${INSTALL_GITHUB_TOKEN:-}" ]; then
   AUTH="Authorization: Basic $(printf 'tkiet2105:%s' "$INSTALL_GITHUB_TOKEN" | base64 -w0)"
-  AUTH_OPT="-c http.extraHeader=$AUTH"
+  GIT_ARGS=(-c "http.extraHeader=$AUTH")
 fi
 if [ -d "$REPO_DIR/.git" ]; then
   cd "$REPO_DIR"
-  git $AUTH_OPT pull origin main
+  git "${GIT_ARGS[@]}" pull origin main
 else
-  git $AUTH_OPT clone "$REPO_URL" "$REPO_DIR"
+  git "${GIT_ARGS[@]}" clone "$REPO_URL" "$REPO_DIR"
   cd "$REPO_DIR"
 fi
 log "✓ repo at $(git rev-parse --short HEAD)"
