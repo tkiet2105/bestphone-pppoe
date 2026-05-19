@@ -181,25 +181,42 @@ function _initSelectionUX() {
   if (!table) return;
   const tbody = table.querySelector('tbody');
 
-  // Rubber-band drag (mousedown ở vùng tbody trống)
-  let band = null, startX = 0, startY = 0, additive = false;
+  // Rubber-band drag + single-click row toggle.
+  // Phân biệt drag vs click qua threshold 5px:
+  //  - mousemove < 5px → coi như click row → toggle selection row đó
+  //  - mousemove ≥ 5px → init band, drag select
+  let startX = 0, startY = 0, additive = false;
+  let band = null, dragStarted = false;
+  let pendingRowId = null;
   const interactiveSel = 'button, input, select, textarea, label, a';
+  const DRAG_THRESHOLD = 5;
 
   tbody.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
     if (e.target.closest(interactiveSel)) return;
     additive = e.ctrlKey || e.metaKey || e.shiftKey;
-    if (!additive) clearSelection();
     startX = e.clientX; startY = e.clientY;
-    band = document.createElement('div');
-    band.id = 'sel-band';
-    band.style.left = startX + 'px'; band.style.top = startY + 'px';
-    band.style.width = '0px'; band.style.height = '0px';
-    document.body.appendChild(band);
+    dragStarted = false;
+    const tr = e.target.closest('tr.pp-row[data-sess-id]');
+    pendingRowId = tr ? parseInt(tr.dataset.sessId) : null;
     e.preventDefault();
   });
 
   window.addEventListener('mousemove', (e) => {
+    if (startX === 0 && startY === 0) return;
+    if (!dragStarted) {
+      const dx = Math.abs(e.clientX - startX);
+      const dy = Math.abs(e.clientY - startY);
+      if (dx < DRAG_THRESHOLD && dy < DRAG_THRESHOLD) return;
+      // Bắt đầu drag → init band + clear selection nếu !additive
+      dragStarted = true;
+      if (!additive) clearSelection();
+      band = document.createElement('div');
+      band.id = 'sel-band';
+      band.style.left = startX + 'px'; band.style.top = startY + 'px';
+      band.style.width = '0px'; band.style.height = '0px';
+      document.body.appendChild(band);
+    }
     if (!band) return;
     const x = Math.min(startX, e.clientX);
     const y = Math.min(startY, e.clientY);
@@ -207,7 +224,6 @@ function _initSelectionUX() {
     const h = Math.abs(e.clientY - startY);
     band.style.left = x + 'px'; band.style.top = y + 'px';
     band.style.width = w + 'px'; band.style.height = h + 'px';
-    // Apply selection
     const rect = { left: x, top: y, right: x + w, bottom: y + h };
     document.querySelectorAll('tr.pp-row[data-sess-id]').forEach(tr => {
       const r = tr.getBoundingClientRect();
@@ -223,7 +239,31 @@ function _initSelectionUX() {
   });
 
   window.addEventListener('mouseup', () => {
-    if (band) { band.remove(); band = null; }
+    if (band) {
+      // Drag commit
+      band.remove(); band = null;
+    } else if (pendingRowId !== null) {
+      // Click row đơn lẻ
+      if (additive) {
+        // Toggle row này
+        if (_selected.has(pendingRowId)) _selected.delete(pendingRowId);
+        else _selected.add(pendingRowId);
+      } else {
+        // Replace: chỉ row này
+        _selected.clear();
+        _selected.add(pendingRowId);
+      }
+      // Re-render sel state
+      document.querySelectorAll('tr.pp-row[data-sess-id]').forEach(tr => {
+        const id = parseInt(tr.dataset.sessId);
+        const sel = _selected.has(id);
+        tr.classList.toggle('sel', sel);
+        const cb = tr.querySelector('input.row-check');
+        if (cb) cb.checked = sel;
+      });
+      _updateSelUI();
+    }
+    startX = 0; startY = 0; pendingRowId = null; dragStarted = false;
   });
 
   // Context menu (right-click)
