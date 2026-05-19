@@ -14,8 +14,8 @@ import (
 type createLineReq struct {
 	Name        string `json:"name" binding:"required"`
 	Iface       string `json:"iface" binding:"required"`
-	IspUsername string `json:"isp_username"`
-	IspPassword string `json:"isp_password"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
 	UseMacvlan  bool   `json:"use_macvlan"`
 	MaxSessions int    `json:"max_sessions"`
 }
@@ -32,8 +32,8 @@ func CreateLine(c *gin.Context) {
 	line := models.Line{
 		Name:        req.Name,
 		Iface:       req.Iface,
-		IspUsername: req.IspUsername,
-		IspPassword: req.IspPassword,
+		Username:    req.Username,
+		Password:    req.Password,
 		UseMacvlan:  req.UseMacvlan,
 		MaxSessions: req.MaxSessions,
 	}
@@ -46,8 +46,8 @@ func CreateLine(c *gin.Context) {
 
 type updateLineReq struct {
 	Name        *string `json:"name"`
-	IspUsername *string `json:"isp_username"`
-	IspPassword *string `json:"isp_password"`
+	Username    *string `json:"username"`
+	Password    *string `json:"password"`
 	UseMacvlan  *bool   `json:"use_macvlan"`
 	MaxSessions *int    `json:"max_sessions"`
 }
@@ -67,11 +67,11 @@ func UpdateLine(c *gin.Context) {
 	if req.Name != nil {
 		line.Name = *req.Name
 	}
-	if req.IspUsername != nil {
-		line.IspUsername = *req.IspUsername
+	if req.Username != nil {
+		line.Username = *req.Username
 	}
-	if req.IspPassword != nil {
-		line.IspPassword = *req.IspPassword
+	if req.Password != nil {
+		line.Password = *req.Password
 	}
 	if req.UseMacvlan != nil {
 		line.UseMacvlan = *req.UseMacvlan

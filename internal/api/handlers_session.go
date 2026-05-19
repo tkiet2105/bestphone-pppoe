@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -15,6 +16,16 @@ import (
 	proxysrv "github.com/tkiet2105/bestphone-pppoe/internal/proxy/server"
 )
 
+// allocMu — serialize ppp_unit + proxy port allocation cho bulk parallel.
+var allocMu sync.Mutex
+
+// randHexInternal — N bytes hex string. Mirror Mode 2 helper.
+func randHexInternal(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
 // randMacGo — sinh MAC random LAA `02:xx:xx:xx:xx:xx`.
 func randMacGo() string {
 	var b [5]byte
@@ -22,15 +33,17 @@ func randMacGo() string {
 	return fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", b[0], b[1], b[2], b[3], b[4])
 }
 
-// allocMu — serialize allocation cua ppp_unit + proxy port trong bulk create.
-// SQLite WAL với maxOpenConns=1 đã serialize TX, nhưng (SELECT free → INSERT)
-// là 2 step rời → race nếu N goroutines song song. Mutex này thắt eo lại.
-var allocMu sync.Mutex
+// proxyAuthReq — mirror Mode 2 createSessionReq.ProxyAuth.
+type proxyAuthReq struct {
+	Mode     string `json:"mode"`     // "random" | "manual" | "none"
+	Username string `json:"username"` // required khi mode=manual
+	Password string `json:"password"` // required khi mode=manual
+}
 
 type createSessionReq struct {
-	Username string `json:"username"` // optional — fallback line.IspUsername
-	Password string `json:"password"` // optional — fallback line.IspPassword
-	MAC      string `json:"mac"`
+	Username  string        `json:"username"`   // optional — override line cred
+	Password  string        `json:"password"`   // optional — override line cred
+	ProxyAuth *proxyAuthReq `json:"proxy_auth"` // optional — client proxy auth
 }
 
 func CreateLineSession(c *gin.Context) {
@@ -53,10 +66,10 @@ func CreateLineSession(c *gin.Context) {
 	ok(c, gin.H{"session": sess, "proxy": p})
 }
 
+// bulkSessReq — mirror Mode 2: chỉ count + proxy_auth (shared cho mọi session).
 type bulkSessReq struct {
-	Count       int                `json:"count" binding:"required"`
-	Creds       []createSessionReq `json:"creds"`
-	AutoMac     bool               `json:"auto_mac"` // mode N-only: backend tự sinh MAC random, dùng line cred
+	Count     int           `json:"count" binding:"required"`
+	ProxyAuth *proxyAuthReq `json:"proxy_auth"`
 }
 
 func CreateLineSessionsBulk(c *gin.Context) {
@@ -71,28 +84,17 @@ func CreateLineSessionsBulk(c *gin.Context) {
 		fail(c, 400, err.Error())
 		return
 	}
-	if req.Count <= 0 || req.Count > 100 {
-		fail(c, 400, "count must be 1..100")
+	if req.Count <= 0 || req.Count > 50 {
+		fail(c, 400, "count must be 1..50")
 		return
 	}
-	// Mode N-only: nếu auto_mac=true HOẶC không có creds → sinh N entries dùng line cred + MAC random.
-	if req.AutoMac || len(req.Creds) == 0 {
-		if line.IspUsername == "" || line.IspPassword == "" {
-			fail(c, 400, "line chưa có isp_username/isp_password — cần PUT /lines/:id trước hoặc gửi creds explicit")
-			return
-		}
-		req.Creds = make([]createSessionReq, req.Count)
-		for i := 0; i < req.Count; i++ {
-			req.Creds[i] = createSessionReq{MAC: randMacGo()}
-		}
-	}
-	if len(req.Creds) < req.Count {
-		fail(c, 400, fmt.Sprintf("need %d creds, got %d", req.Count, len(req.Creds)))
+	if line.Username == "" || line.Password == "" {
+		fail(c, 400, "line chưa có username/password — cần PUT /lines/:id trước")
 		return
 	}
+
 	type result struct {
 		SessionId uint   `json:"session_id"`
-		Username  string `json:"username"`
 		Status    string `json:"status"`
 		Error     string `json:"error,omitempty"`
 	}
@@ -102,8 +104,9 @@ func CreateLineSessionsBulk(c *gin.Context) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			sess, _, err := createSessionAndDial(line, req.Creds[idx])
-			r := result{Username: req.Creds[idx].Username}
+			sub := createSessionReq{ProxyAuth: req.ProxyAuth}
+			sess, _, err := createSessionAndDial(line, sub)
+			r := result{}
 			if sess != nil {
 				r.SessionId = sess.Id
 				r.Status = sess.Status
@@ -119,17 +122,17 @@ func CreateLineSessionsBulk(c *gin.Context) {
 	ok(c, out)
 }
 
-// truncateErr — cắt error message dài (pppd verbose log) + extract AuthNak hint.
+// truncateErr — gọn error message dài (pppd verbose) + extract AuthNak hint.
 func truncateErr(s string, n int) string {
 	low := strings.ToLower(s)
 	if strings.Contains(low, "authnak") || strings.Contains(low, "authentication failed") {
-		return "PAP AuthNak — cred không khớp BRAS (cred fake hoặc sai)"
+		return "PAP AuthNak — cred không khớp BRAS"
 	}
 	if strings.Contains(low, "no pado") || strings.Contains(low, "timeout") {
-		return "No PADO — NIC không nhận PPPoE upstream (cáp chưa cắm hoặc sai port)"
+		return "No PADO — NIC không nhận PPPoE upstream"
 	}
 	if strings.Contains(low, "iface") && strings.Contains(low, "did not come up") {
-		return "iface không lên UP — pppd dial fail (xem last_error chi tiết)"
+		return "iface không lên UP"
 	}
 	if len(s) <= n {
 		return s
@@ -137,28 +140,31 @@ func truncateErr(s string, n int) string {
 	return s[:n] + "..."
 }
 
+// createSessionAndDial — flow Mode 2:
+//  1. Resolve ISP cred: req → fallback line.Username/Password.
+//  2. Sinh MAC random nếu line.UseMacvlan && req không có cred override.
+//  3. Alloc ppp_unit + port (serialized).
+//  4. Insert Session + Proxy + (PppoeProxyCredential theo proxy_auth.mode).
+//  5. Dial pppd.
+//  6. Start proxy listener.
 func createSessionAndDial(line models.Line, req createSessionReq) (*models.Session, *models.Proxy, error) {
-	// Resolve cred: req override → fallback line.IspUsername/IspPassword.
-	// Lý do: 1 PPPoE account ISP cấp ⇒ N session same cred, khác MAC (BRAS treat
-	// như N gateway độc lập cùng account). User KHÔNG cần nhập cred mỗi session.
 	username := req.Username
 	password := req.Password
 	if username == "" {
-		username = line.IspUsername
+		username = line.Username
 	}
 	if password == "" {
-		password = line.IspPassword
+		password = line.Password
 	}
 	if username == "" || password == "" {
-		return nil, nil, fmt.Errorf("cần cred PPPoE: nhập trong line.isp_username/password hoặc override per-session")
+		return nil, nil, fmt.Errorf("cần ISP cred: nhập trong line.username/password hoặc override per-session")
 	}
-	// Auto-generate MAC nếu line.use_macvlan và request không có MAC.
-	mac := req.MAC
-	if line.UseMacvlan && mac == "" {
+
+	mac := ""
+	if line.UseMacvlan {
 		mac = randMacGo()
 	}
 
-	// === Alloc phase (serialized) — đảm bảo ppp_unit + port không trùng khi N goroutines song song ===
 	allocMu.Lock()
 	pppUnit, err := pppoe.AllocPppUnit(db.DB)
 	if err != nil {
@@ -190,22 +196,45 @@ func createSessionAndDial(line models.Line, req createSessionReq) (*models.Sessi
 		return nil, nil, err
 	}
 	allocMu.Unlock()
-	// === End alloc ===
 
-	// Seed cred mặc định cho proxy listener (CLIENT auth — KHÔNG phải PPPoE auth).
-	// Mặc định lấy cùng cred ISP để user copy-paste 1 chỗ, có thể đổi thành random
-	// sau qua /proxies/:id/credentials.
-	cred := models.ProxyCredential{
-		ProxyId:  p.Id,
-		Label:    "default",
-		Username: username,
-		Password: password,
-		Enabled:  true,
+	// Apply proxy_auth mode → seed ProxyCredential (CLIENT auth — KHÔNG phải ISP).
+	mode := "random"
+	if req.ProxyAuth != nil && req.ProxyAuth.Mode != "" {
+		mode = req.ProxyAuth.Mode
 	}
-	db.DB.Create(&cred)
+	switch mode {
+	case "random":
+		cred := models.ProxyCredential{
+			ProxyId:  p.Id,
+			Label:    "default",
+			Username: "u" + randHexInternal(4),
+			Password: randHexInternal(8),
+			Enabled:  true,
+		}
+		db.DB.Create(&cred)
+	case "manual":
+		if req.ProxyAuth == nil || req.ProxyAuth.Username == "" || req.ProxyAuth.Password == "" {
+			db.DB.Delete(&p)
+			db.DB.Delete(&sess)
+			return nil, nil, fmt.Errorf("proxy_auth.mode=manual cần username + password")
+		}
+		cred := models.ProxyCredential{
+			ProxyId:  p.Id,
+			Label:    "default",
+			Username: req.ProxyAuth.Username,
+			Password: req.ProxyAuth.Password,
+			Enabled:  true,
+		}
+		db.DB.Create(&cred)
+	case "none":
+		// KHÔNG seed cred → listener mode no-auth (SOCKS5 method 0x00).
+	default:
+		db.DB.Delete(&p)
+		db.DB.Delete(&sess)
+		return nil, nil, fmt.Errorf("proxy_auth.mode phải là random|manual|none")
+	}
 
 	if err := pppoe.M.Dial(sess.Id); err != nil {
-		// Dial fail — giữ session + proxy ở DB cho user retry. Không cascade delete.
 		db.DB.First(&sess, sess.Id)
 		return &sess, &p, fmt.Errorf("dial: %w", err)
 	}
@@ -230,8 +259,8 @@ func ListSessions(c *gin.Context) {
 
 	type row struct {
 		models.Session
-		ProxyPort   int `json:"proxy_port"`
-		ProxyId     uint `json:"proxy_id"`
+		ProxyPort   int    `json:"proxy_port"`
+		ProxyId     uint   `json:"proxy_id"`
 		ProxyStatus string `json:"proxy_status"`
 		CredsCount  int64  `json:"creds_count"`
 	}

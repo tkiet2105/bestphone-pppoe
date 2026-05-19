@@ -3,7 +3,6 @@ package api
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -49,8 +48,8 @@ func CreateCred(c *gin.Context) {
 }
 
 type bulkCredReq struct {
-	Count       int    `json:"count" binding:"required"`
-	LabelPrefix string `json:"label_prefix"`
+	Count  int    `json:"count" binding:"required"`
+	Prefix string `json:"prefix"` // username prefix, default "u"
 }
 
 func BulkCreateCreds(c *gin.Context) {
@@ -60,22 +59,22 @@ func BulkCreateCreds(c *gin.Context) {
 		fail(c, 400, err.Error())
 		return
 	}
-	if req.Count <= 0 || req.Count > 100 {
-		fail(c, 400, "count must be 1..100")
+	if req.Count <= 0 || req.Count > 200 {
+		fail(c, 400, "count must be 1..200")
 		return
 	}
-	if req.LabelPrefix == "" {
-		req.LabelPrefix = "auto"
+	prefix := req.Prefix
+	if prefix == "" {
+		prefix = "u"
 	}
 	out := make([]models.ProxyCredential, 0, req.Count)
 	for i := 0; i < req.Count; i++ {
-		u := randHex(6)
-		p := randHex(8)
+		// Mode 2 pattern: username = prefix + randHex(4), password = randHex(8)
 		cr := models.ProxyCredential{
 			ProxyId:  uint(pid),
-			Label:    fmt.Sprintf("%s-%d", req.LabelPrefix, i+1),
-			Username: u,
-			Password: p,
+			Label:    "sub-cred",
+			Username: prefix + randHex(4),
+			Password: randHex(8),
 			Enabled:  true,
 		}
 		if err := db.DB.Create(&cr).Error; err != nil {

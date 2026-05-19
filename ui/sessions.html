@@ -33,8 +33,7 @@
           <option value="disconnected">disconnected</option>
         </select>
         <button onclick="loadSessions()">Refresh</button>
-        <button onclick="openCreateSession()">+ Session</button>
-        <button class="secondary" onclick="openBulkSession()">+ Bulk</button>
+        <button onclick="openCreateSession()">+ Tạo Session(s)</button>
         <button class="secondary" onclick="showExport()">Export</button>
       </div>
       <table id="sessions-table">
@@ -49,93 +48,71 @@
     </div>
   </main>
 
-  <!-- Create session modal -->
+  <!-- Create session modal (Mode 2 pattern: Line + count + proxy_auth) -->
   <div class="modal-bg" id="create-sess-modal">
-    <div class="modal">
-      <h3>Tạo Session mới</h3>
-      <div class="form-row"><label>Line (cred ISP lấy từ line)</label>
-        <select id="ns-line" onchange="updateSingleUI()"></select>
-        <div class="muted small" id="ns-line-info" style="margin-top:4px"></div>
+    <div class="modal" style="min-width:480px">
+      <h3>Tạo Session(s)</h3>
+      <div class="form-row"><label>Line</label>
+        <select id="sm-line" onchange="updateSessModalUI()"></select>
+        <div class="muted small" id="sm-line-info" style="margin-top:4px"></div>
       </div>
-
-      <div class="form-row"><label>MAC spoof (line use_macvlan; trống = backend tự sinh random)</label>
-        <div class="row" style="gap:6px">
-          <input id="ns-mac" placeholder="02:aa:bb:cc:dd:01 (hoặc trống để random)">
-          <button class="secondary" type="button" onclick="rollRandomMac()" title="Random MAC">🎲</button>
+      <div class="form-row"><label>Số session</label>
+        <input type="number" id="sm-count" value="1" min="1" max="50">
+        <div class="muted small" style="margin-top:4px">1–50. Mỗi session dùng cred ISP của line + MAC random.</div>
+      </div>
+      <div class="form-row"><label>Proxy auth mode (client SOCKS5/HTTP auth — KHÔNG phải ISP)</label>
+        <select id="sm-proxy-mode" onchange="updateSessModalUI()">
+          <option value="random">Random (backend sinh u&lt;4hex&gt;/&lt;8hex&gt;)</option>
+          <option value="manual">Manual (nhập thủ công)</option>
+          <option value="none">None (proxy mở, no-auth)</option>
+        </select>
+      </div>
+      <div id="sm-manual-rows" style="display:none">
+        <div class="form-row"><label>Proxy username</label>
+          <input id="sm-proxy-user">
+        </div>
+        <div class="form-row"><label>Proxy password</label>
+          <input id="sm-proxy-pass">
         </div>
       </div>
-
-      <details style="margin:10px 0">
-        <summary class="muted small" style="cursor:pointer">▸ Override cred ISP (advanced — dùng cho ISP có sub-accounts)</summary>
-        <div class="form-row" style="margin-top:8px">
-          <label>Username (PPPoE) override</label>
-          <input id="ns-user" placeholder="(để trống = dùng cred line)">
-        </div>
-        <div class="form-row">
-          <label>Password (PPPoE) override</label>
-          <input id="ns-pass" placeholder="(để trống = dùng cred line)">
-        </div>
-      </details>
-
       <div class="actions">
         <button class="secondary" onclick="closeModal('create-sess-modal')">Hủy</button>
-        <button onclick="submitCreateSession()">Tạo + Dial</button>
+        <button onclick="submitCreateSession()">Tạo</button>
       </div>
     </div>
   </div>
 
-  <!-- Bulk session modal -->
-  <div class="modal-bg" id="bulk-sess-modal">
-    <div class="modal" style="min-width:560px">
-      <h3>Bulk Sessions</h3>
-      <div class="form-row"><label>Line (cred ISP lấy từ line)</label>
-        <select id="bs-line" onchange="updateBulkUI()"></select>
-        <div class="muted small" id="bs-line-info" style="margin-top:4px"></div>
-      </div>
-
-      <div class="form-row">
-        <label>Số session cần tạo (N)</label>
-        <input type="number" id="bs-count" value="10" min="1" max="100">
-      </div>
-
-      <div class="muted small" style="color:#94a3b8;margin:6px 0">
-        Mỗi session sẽ dùng cùng cred ISP của line, MAC random (LAA <span class="mono">02:xx:xx:xx:xx:xx</span>).
-        BRAS treat như N gateway độc lập cùng account → N IP public riêng.
-      </div>
-
-      <details style="margin:10px 0">
-        <summary class="muted small" style="cursor:pointer">▸ Cred override per-row (advanced — paste textarea)</summary>
-        <div class="form-row" style="margin-top:8px">
-          <label>Creds custom (mỗi dòng: <span class="mono">user pass [mac]</span>)</label>
-          <textarea id="bs-creds" rows="5" placeholder="(để trống = dùng line cred + MAC random cho N session)"></textarea>
-          <div class="muted small" style="margin-top:4px;color:#f59e0b">
-            ⚠ Random user/pass sẽ AuthNak với ISP thật. Chỉ dùng nếu bạn có sub-accounts khác nhau.
-          </div>
-        </div>
-      </details>
-
-      <div class="actions">
-        <button class="secondary" onclick="closeModal('bulk-sess-modal')">Hủy</button>
-        <button onclick="submitBulk()">Tạo song song</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Creds modal -->
+  <!-- Creds modal (Mode 2 pattern: 2 section single + bulk) -->
   <div class="modal-bg" id="creds-modal">
-    <div class="modal">
+    <div class="modal" style="min-width:640px">
       <h3>Credentials cho session <span id="cm-sid"></span> (proxy <span id="cm-pid"></span>)</h3>
       <table class="creds-table" id="creds-table">
         <thead><tr><th>ID</th><th>Label</th><th>User</th><th>Pass</th><th>Enabled</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
-      <div class="row" style="margin-top:12px">
-        <input id="cm-label" placeholder="label">
-        <input id="cm-user" placeholder="user">
-        <input id="cm-pass" placeholder="pass">
+
+      <hr style="border:0;border-top:1px solid #334155;margin:16px 0">
+      <h4 style="margin:0 0 8px;font-size:14px">Thêm 1 cred</h4>
+      <div class="row" style="margin-top:8px;gap:6px">
+        <input id="cm-label" placeholder="label (optional)" style="max-width:140px">
+        <input id="cm-user" placeholder="username">
+        <button class="secondary small" type="button" onclick="document.getElementById('cm-user').value='u'+credRandHex(4)" title="Random user">🎲</button>
+        <input id="cm-pass" placeholder="password">
+        <button class="secondary small" type="button" onclick="document.getElementById('cm-pass').value=credRandHex(8)" title="Random pass">🎲</button>
         <button onclick="submitCred()">Thêm</button>
-        <button class="secondary" onclick="bulkCredsPrompt()">Bulk N</button>
       </div>
+
+      <hr style="border:0;border-top:1px solid #334155;margin:16px 0">
+      <h4 style="margin:0 0 8px;font-size:14px">Bulk N cred ngẫu nhiên</h4>
+      <div class="row" style="margin-top:8px;gap:6px">
+        <label class="muted small" style="flex:none">Count:</label>
+        <input type="number" id="cm-bulk-count" value="10" min="1" max="200" style="max-width:100px">
+        <label class="muted small" style="flex:none">Prefix:</label>
+        <input id="cm-bulk-prefix" value="u" style="max-width:100px">
+        <button onclick="submitBulkCred()">Sinh N</button>
+      </div>
+      <div class="muted small" style="margin-top:4px">Backend sinh: <span class="mono">&lt;prefix&gt;&lt;4hex&gt;</span> / <span class="mono">&lt;8hex&gt;</span></div>
+
       <div class="actions">
         <button class="secondary" onclick="closeModal('creds-modal')">Đóng</button>
       </div>

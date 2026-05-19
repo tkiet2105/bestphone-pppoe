@@ -12,7 +12,7 @@ async function loadLines() {
         <td>${r.id}</td>
         <td>${escapeHTML(r.name)}</td>
         <td class="mono">${escapeHTML(r.iface)}</td>
-        <td class="mono small">${r.isp_username ? escapeHTML(r.isp_username) : '<span class="muted">(chưa set)</span>'}</td>
+        <td class="mono small">${r.username ? escapeHTML(r.username) : '<span class="muted">(chưa set)</span>'}</td>
         <td>${r.use_macvlan ? '✓' : '—'}</td>
         <td>${r.max_sessions}</td>
         <td>${r.session_count}</td>
@@ -91,13 +91,13 @@ async function submitCreateLine() {
   const data = {
     name: document.getElementById('nl-name').value.trim(),
     iface: document.getElementById('nl-iface').value.trim(),
-    isp_username: document.getElementById('nl-isp-user').value.trim(),
-    isp_password: document.getElementById('nl-isp-pass').value.trim(),
+    username: document.getElementById('nl-user').value.trim(),
+    password: document.getElementById('nl-pass').value.trim(),
     use_macvlan: document.getElementById('nl-macvlan').value === 'true',
     max_sessions: parseInt(document.getElementById('nl-max').value) || 8,
   };
   if (!data.name || !data.iface) { Toast.error('Tên + iface bắt buộc'); return; }
-  if (!data.isp_username || !data.isp_password) {
+  if (!data.username || !data.password) {
     if (!confirm('Chưa nhập ISP cred — line sẽ không dial được session tự động. Tạo line trống cred?')) return;
   }
   try {
@@ -114,12 +114,12 @@ async function editLine(id) {
   const lines = await Api.listLines();
   const l = lines.find(x => x.id === id);
   if (!l) { Toast.error('Không tìm thấy line'); return; }
-  const newUser = prompt(`ISP username (đang: "${l.isp_username || ''}"):`, l.isp_username || '');
+  const newUser = prompt(`Username PPPoE (đang: "${l.username || ''}"):`, l.username || '');
   if (newUser === null) return;
-  const newPass = prompt(`ISP password (đang: "${l.isp_password || ''}"):`, l.isp_password || '');
+  const newPass = prompt(`Password PPPoE (đang: "${l.password || ''}"):`, l.password || '');
   if (newPass === null) return;
   try {
-    await Api.updateLine(id, { isp_username: newUser, isp_password: newPass });
+    await Api.updateLine(id, { username: newUser, password: newPass });
     Toast.success('Updated');
     loadLines();
   } catch (e) { Toast.error(e.message); }

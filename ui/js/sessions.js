@@ -3,21 +3,34 @@ if (!ensureAuth()) {} else {
   init();
 }
 
-// --- NIC panel ---
-let _nicsPADO = {}; // iface → {ac_name, ac_source_mac}
+let _lines = [];
+let _sessions = [];
+let _nicsPADO = {}; // iface → {pado, ac_name, ...}
 
+const params = new URLSearchParams(location.search);
+const initialLine = params.get('line') || '';
+
+async function init() {
+  await Promise.all([loadLines(), loadNics()]);
+  if (initialLine) document.getElementById('filter-line').value = initialLine;
+  await loadSessions();
+  Api.subscribeEvents((type) => {
+    if (['session.status', 'session.public_ip', 'session.rotate', 'proxy.started', 'proxy.stopped'].includes(type)) {
+      loadSessions();
+    }
+  });
+  document.getElementById('filter-line').addEventListener('change', loadSessions);
+  document.getElementById('filter-status').addEventListener('change', loadSessions);
+}
+
+// ─── NIC panel ───
 async function loadNics() {
-  try {
-    const list = await Api.listIfaces();
-    renderNics(list);
-  } catch (e) { Toast.error('Load NICs: ' + e.message); }
+  try { renderNics(await Api.listIfaces()); }
+  catch (e) { Toast.error('Load NICs: ' + e.message); }
 }
 
 function renderNics(list) {
-  if (!list.length) {
-    document.getElementById('nic-list').textContent = '(không có NIC physical)';
-    return;
-  }
+  if (!list.length) { document.getElementById('nic-list').textContent = '(không có NIC physical)'; return; }
   const html = list.map(n => {
     const tags = [];
     if (n.state === 'up') tags.push('<span class="tag up">UP</span>');
@@ -25,20 +38,17 @@ function renderNics(list) {
     else tags.push('<span class="tag no-link">NO-CARRIER</span>');
     if (n.used_by_line) tags.push(`<span class="tag line">Line #${n.used_by_line} (${escapeHTML(n.used_by_name)})</span>`);
     const pado = _nicsPADO[n.name];
-    if (pado && pado.pado) {
-      tags.push(`<span class="tag pado">PADO ${escapeHTML(pado.ac_name)}</span>`);
-    }
+    if (pado && pado.pado) tags.push(`<span class="tag pado">PADO ${escapeHTML(pado.ac_name)}</span>`);
     const ips = n.ips && n.ips.length ? n.ips.join(', ') : '—';
     const klass = ['nic-tile'];
     if (!n.carrier) klass.push('no-carrier');
     if (pado && pado.pado) klass.push('has-pado');
-    return `
-      <div class="${klass.join(' ')}">
-        <div class="nic-name">${escapeHTML(n.name)}</div>
-        <div class="nic-meta">${escapeHTML(n.mac)}</div>
-        <div class="nic-meta">${escapeHTML(ips)}</div>
-        <div class="nic-tags">${tags.join('')}</div>
-      </div>`;
+    return `<div class="${klass.join(' ')}">
+      <div class="nic-name">${escapeHTML(n.name)}</div>
+      <div class="nic-meta">${escapeHTML(n.mac)}</div>
+      <div class="nic-meta">${escapeHTML(ips)}</div>
+      <div class="nic-tags">${tags.join('')}</div>
+    </div>`;
   }).join('');
   document.getElementById('nic-list').innerHTML = '<div class="nic-grid">' + html + '</div>';
 }
@@ -52,7 +62,7 @@ async function probeNics() {
     results.forEach(r => _nicsPADO[r.name] = r);
     const padoCount = results.filter(r => r.pado).length;
     Toast.success(`Probe xong: ${padoCount}/${results.length} NIC có PADO`);
-    loadNics(); // re-render để hiển thị tag PADO
+    loadNics();
   } catch (e) {
     Toast.error('Probe: ' + e.message);
   } finally {
@@ -60,36 +70,21 @@ async function probeNics() {
   }
 }
 
-let _lines = [];
-let _sessions = [];
-
-const params = new URLSearchParams(location.search);
-const initialLine = params.get('line') || '';
-
-async function init() {
-  await Promise.all([loadLines(), loadNics()]);
-  if (initialLine) document.getElementById('filter-line').value = initialLine;
-  await loadSessions();
-  // SSE live update
-  Api.subscribeEvents((type, data) => {
-    if (type === 'session.status' || type === 'session.public_ip' || type === 'session.rotate' || type === 'proxy.started' || type === 'proxy.stopped') {
-      loadSessions();
-    }
-  });
-  document.getElementById('filter-line').addEventListener('change', loadSessions);
-  document.getElementById('filter-status').addEventListener('change', loadSessions);
-}
-
+// ─── Lines load ───
 async function loadLines() {
   try {
     _lines = await Api.listLines();
-    const sel = document.getElementById('filter-line');
-    sel.innerHTML = '<option value="">Tất cả lines</option>' + _lines.map(l => `<option value="${l.id}">${escapeHTML(l.name)} (${l.iface})</option>`).join('');
-    document.getElementById('ns-line').innerHTML = _lines.map(l => `<option value="${l.id}">${escapeHTML(l.name)}</option>`).join('');
-    document.getElementById('bs-line').innerHTML = _lines.map(l => `<option value="${l.id}">${escapeHTML(l.name)}</option>`).join('');
+    const filterSel = document.getElementById('filter-line');
+    filterSel.innerHTML = '<option value="">Tất cả lines</option>' +
+      _lines.map(l => `<option value="${l.id}">${escapeHTML(l.name)} (${l.iface})</option>`).join('');
+    const smSel = document.getElementById('sm-line');
+    if (smSel) {
+      smSel.innerHTML = _lines.map(l => `<option value="${l.id}">${escapeHTML(l.name)} — ${escapeHTML(l.iface)} — ${l.username ? escapeHTML(l.username) : '(no cred)'}</option>`).join('');
+    }
   } catch (e) { Toast.error(e.message); }
 }
 
+// ─── Sessions table ───
 async function loadSessions() {
   const params = {};
   const lineId = document.getElementById('filter-line').value;
@@ -116,10 +111,9 @@ function renderSessions() {
   tbody.innerHTML = _sessions.map(s => {
     const errCell = s.last_error
       ? `<span class="mono small" style="color:#fbbf24" title="${escapeHTML(s.last_error)}">${escapeHTML(s.last_error.length > 50 ? s.last_error.slice(0,50) + '…' : s.last_error)}</span>
-         <a href="/logs.html?filter=${encodeURIComponent(s.username)}" target="_blank" class="small" title="Xem log pppd cho session này">log↗</a>`
+         <a href="/logs.html?filter=${encodeURIComponent(s.username)}" target="_blank" class="small">log↗</a>`
       : '<span class="muted small">—</span>';
-    return `
-    <tr>
+    return `<tr>
       <td>${s.id}</td>
       <td>${escapeHTML(lineName(s.line_id))}</td>
       <td class="mono">ppp${s.ppp_unit}</td>
@@ -135,131 +129,77 @@ function renderSessions() {
         <button class="small secondary" onclick="toggleEnabled(${s.id},'${s.proxy_status}')">${s.proxy_status === 'running' ? 'Tắt' : 'Bật'}</button>
         <button class="small danger" onclick="deleteSession(${s.id})">Xóa</button>
       </td>
-    </tr>
-    `;
+    </tr>`;
   }).join('');
 }
 
+// ─── Create Session(s) Modal (Mode 2 pattern) ───
 function openCreateSession() {
   document.getElementById('create-sess-modal').classList.add('open');
-  document.getElementById('ns-user').value = '';
-  document.getElementById('ns-pass').value = '';
-  document.getElementById('ns-mac').value = '';
-  updateSingleUI();
+  document.getElementById('sm-count').value = '1';
+  document.getElementById('sm-proxy-mode').value = 'random';
+  document.getElementById('sm-proxy-user').value = '';
+  document.getElementById('sm-proxy-pass').value = '';
+  updateSessModalUI();
 }
 
-function randHex(n) {
-  const a = new Uint8Array(n);
-  crypto.getRandomValues(a);
-  return Array.from(a).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-function randomUser() { return 'u_' + randHex(4); }
-function randomPass() { return randHex(6); }
-function randomMac() {
-  const a = new Uint8Array(5);
-  crypto.getRandomValues(a);
-  return '02:' + Array.from(a).map(b => b.toString(16).padStart(2, '0')).join(':');
-}
-
-function updateSingleUI() {
-  const lineId = parseInt(document.getElementById('ns-line').value);
+function updateSessModalUI() {
+  const lineId = parseInt(document.getElementById('sm-line').value);
   const line = _lines.find(l => l.id === lineId);
-  const info = document.getElementById('ns-line-info');
+  const info = document.getElementById('sm-line-info');
   if (line) {
-    if (line.isp_username) {
-      info.innerHTML = `Sẽ dùng cred ISP của line: <span class="mono">${escapeHTML(line.isp_username)}</span> / <span class="mono">••••</span>`;
+    if (line.username) {
+      info.innerHTML = `Cred ISP của line: <span class="mono">${escapeHTML(line.username)}</span> / <span class="mono">••••</span>`;
       info.style.color = '#86efac';
     } else {
-      info.innerHTML = '⚠ Line CHƯA SET cred ISP — cần override bên dưới hoặc Edit line trước.';
+      info.innerHTML = '⚠ Line CHƯA SET cred ISP — Edit line trước hoặc tạo session sẽ fail.';
       info.style.color = '#fbbf24';
     }
   }
-}
-
-function rollRandomMac() {
-  document.getElementById('ns-mac').value = randomMac();
+  const mode = document.getElementById('sm-proxy-mode').value;
+  document.getElementById('sm-manual-rows').style.display = mode === 'manual' ? '' : 'none';
 }
 
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
 async function submitCreateSession() {
-  const data = {
-    username: document.getElementById('ns-user').value.trim(),
-    password: document.getElementById('ns-pass').value.trim(),
-    mac: document.getElementById('ns-mac').value.trim() || randomMac(),
-  };
-  const lineId = parseInt(document.getElementById('ns-line').value);
-  // Cred resolve: empty → backend dùng line cred
+  const lineId = parseInt(document.getElementById('sm-line').value);
+  const count = parseInt(document.getElementById('sm-count').value) || 1;
+  const mode = document.getElementById('sm-proxy-mode').value;
+  if (count < 1 || count > 50) { Toast.error('Count phải 1..50'); return; }
+  const proxyAuth = { mode };
+  if (mode === 'manual') {
+    proxyAuth.username = document.getElementById('sm-proxy-user').value.trim();
+    proxyAuth.password = document.getElementById('sm-proxy-pass').value.trim();
+    if (!proxyAuth.username || !proxyAuth.password) {
+      Toast.error('Manual mode cần proxy username + password');
+      return;
+    }
+  }
   try {
-    const r = await Api.createSession(lineId, data);
-    const credLabel = data.username || '(line cred)';
-    Toast.success(`Session ${r.session.id} ${r.session.status} (cred: ${credLabel}, MAC: ${data.mac})`);
+    if (count === 1) {
+      const r = await Api.createSession(lineId, { proxy_auth: proxyAuth });
+      Toast.success(`Session ${r.session.id} ${r.session.status}`);
+    } else {
+      Toast.info(`Bulk ${count} sessions...`);
+      const r = await Api.bulkCreateSessions(lineId, { count, proxy_auth: proxyAuth });
+      const ok = r.filter(x => x.status === 'connected').length;
+      const err = r.filter(x => x.status === 'error').length;
+      Toast.success(`Bulk: ${ok} connected · ${err} error / ${r.length}`);
+      if (err > 0) {
+        const errMsgs = [...new Set(r.filter(x => x.error).map(x => x.error))];
+        errMsgs.slice(0, 2).forEach(m => Toast.info('Lý do: ' + m));
+      }
+    }
     closeModal('create-sess-modal');
     loadSessions();
   } catch (e) { Toast.error('Tạo session: ' + e.message); }
 }
 
-function openBulkSession() {
-  document.getElementById('bulk-sess-modal').classList.add('open');
-  document.getElementById('bs-creds').value = '';
-  document.getElementById('bs-count').value = '10';
-  updateBulkUI();
-}
-
-function updateBulkUI() {
-  const lineId = parseInt(document.getElementById('bs-line').value);
-  const line = _lines.find(l => l.id === lineId);
-  const info = document.getElementById('bs-line-info');
-  if (line) {
-    if (line.isp_username) {
-      info.innerHTML = `Sẽ dùng cred ISP của line: <span class="mono">${escapeHTML(line.isp_username)}</span> / <span class="mono">••••</span> × N MAC random.`;
-      info.style.color = '#86efac';
-    } else {
-      info.innerHTML = '⚠ Line CHƯA SET cred ISP — cần Edit line hoặc dùng textarea override.';
-      info.style.color = '#fbbf24';
-    }
-  }
-}
-
-async function submitBulk() {
-  const lineId = parseInt(document.getElementById('bs-line').value);
-  const n = parseInt(document.getElementById('bs-count').value) || 0;
-  const raw = document.getElementById('bs-creds').value.trim();
-
-  let payload;
-  if (raw) {
-    // Override mode: textarea custom
-    const creds = raw.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
-      const parts = line.split(/\s+/);
-      return { username: parts[0], password: parts[1], mac: parts[2] || randomMac() };
-    });
-    if (!creds.length) { Toast.error('Textarea trống'); return; }
-    payload = { count: creds.length, creds };
-  } else {
-    // Default mode: N + line cred + MAC random
-    if (n <= 0 || n > 100) { Toast.error('N phải trong 1..100'); return; }
-    payload = { count: n, auto_mac: true };
-  }
-  try {
-    Toast.info(`Bulk ${payload.count} sessions — chạy nền (mỗi dial ~3s)...`);
-    const r = await Api.bulkCreateSessions(lineId, payload);
-    const connected = r.filter(x => x.status === 'connected').length;
-    const errored = r.filter(x => x.status === 'error').length;
-    const created = r.filter(x => x.session_id > 0).length;
-    Toast.success(`Bulk: ${created}/${r.length} created in DB · ${connected} connected · ${errored} dial-fail`);
-    if (errored > 0) {
-      // Show distinct error messages cho user
-      const errMsgs = [...new Set(r.filter(x => x.error).map(x => x.error))];
-      errMsgs.slice(0, 3).forEach(m => Toast.info('Lý do: ' + m));
-    }
-    closeModal('bulk-sess-modal');
-    loadSessions();
-  } catch (e) { Toast.error('Bulk: ' + e.message); }
-}
-
+// ─── Session actions ───
 async function rotateSession(id) {
   try {
-    Toast.info('Đang rotate ' + id + '...');
+    Toast.info('Rotate ' + id + '...');
     const r = await Api.rotateSession(id);
     Toast.success(`Rotate OK: ${r.old_ip || '—'} → ${r.new_ip || '—'}${r.same_ip ? ' (same)' : ''}`);
     loadSessions();
@@ -284,13 +224,25 @@ async function deleteSession(id) {
   } catch (e) { Toast.error(e.message); }
 }
 
+// ─── Credentials modal (Mode 2 pattern: 2 section single + bulk) ───
 let _curPid = 0;
 let _curSid = 0;
+
+function credRandHex(n) {
+  const a = new Uint8Array(n);
+  crypto.getRandomValues(a);
+  return Array.from(a).map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
 async function openCreds(sid, pid) {
   _curSid = sid; _curPid = pid;
   document.getElementById('cm-sid').textContent = sid;
   document.getElementById('cm-pid').textContent = pid;
+  document.getElementById('cm-label').value = '';
+  document.getElementById('cm-user').value = '';
+  document.getElementById('cm-pass').value = '';
+  document.getElementById('cm-bulk-count').value = '10';
+  document.getElementById('cm-bulk-prefix').value = 'u';
   document.getElementById('creds-modal').classList.add('open');
   await loadCreds();
 }
@@ -299,26 +251,24 @@ async function loadCreds() {
   try {
     const rows = await Api.listCreds(_curPid);
     const tbody = document.querySelector('#creds-table tbody');
-    tbody.innerHTML = rows.map(r => `
-      <tr>
-        <td>${r.id}</td>
-        <td>${escapeHTML(r.label)}</td>
-        <td class="mono">${escapeHTML(r.username)}</td>
-        <td class="mono">${escapeHTML(r.password)}</td>
-        <td><input type="checkbox" ${r.enabled?'checked':''} onchange="toggleCred(${r.id},this.checked)"></td>
-        <td><button class="small danger" onclick="delCred(${r.id})">Xóa</button></td>
-      </tr>
-    `).join('') || '<tr><td colspan="6" class="muted">(empty)</td></tr>';
+    tbody.innerHTML = rows.map(r => `<tr>
+      <td>${r.id}</td>
+      <td>${escapeHTML(r.label)}</td>
+      <td class="mono">${escapeHTML(r.username)}</td>
+      <td class="mono">${escapeHTML(r.password)}</td>
+      <td><input type="checkbox" ${r.enabled?'checked':''} onchange="toggleCred(${r.id},this.checked)"></td>
+      <td><button class="small danger" onclick="delCred(${r.id})">Xóa</button></td>
+    </tr>`).join('') || '<tr><td colspan="6" class="muted">(empty — proxy mở no-auth)</td></tr>';
   } catch (e) { Toast.error(e.message); }
 }
 
 async function submitCred() {
   const data = {
-    label: document.getElementById('cm-label').value.trim() || 'manual',
+    label: document.getElementById('cm-label').value.trim(),
     username: document.getElementById('cm-user').value.trim(),
     password: document.getElementById('cm-pass').value.trim(),
   };
-  if (!data.username || !data.password) { Toast.error('user/pass'); return; }
+  if (!data.username || !data.password) { Toast.error('username + password bắt buộc'); return; }
   try {
     await Api.createCred(_curPid, data);
     document.getElementById('cm-label').value = '';
@@ -329,29 +279,28 @@ async function submitCred() {
   } catch (e) { Toast.error(e.message); }
 }
 
-async function bulkCredsPrompt() {
-  const n = prompt('Số cred ngẫu nhiên muốn sinh?', '10');
-  if (!n) return;
+async function submitBulkCred() {
+  const count = parseInt(document.getElementById('cm-bulk-count').value) || 0;
+  const prefix = document.getElementById('cm-bulk-prefix').value.trim() || 'u';
+  if (count < 1 || count > 200) { Toast.error('Count phải 1..200'); return; }
   try {
-    await Api.bulkCreds(_curPid, { count: parseInt(n), label_prefix: 'auto' });
+    await Api.bulkCreds(_curPid, { count, prefix });
     loadCreds();
-    Toast.success('Sinh ' + n + ' cred');
+    Toast.success(`Sinh ${count} cred`);
   } catch (e) { Toast.error(e.message); }
 }
 
 async function toggleCred(cid, enabled) {
-  try {
-    await Api.updateCred(_curPid, cid, { enabled });
-  } catch (e) { Toast.error(e.message); }
+  try { await Api.updateCred(_curPid, cid, { enabled }); }
+  catch (e) { Toast.error(e.message); }
 }
 
 async function delCred(cid) {
-  try {
-    await Api.deleteCred(_curPid, cid);
-    loadCreds();
-  } catch (e) { Toast.error(e.message); }
+  try { await Api.deleteCred(_curPid, cid); loadCreds(); }
+  catch (e) { Toast.error(e.message); }
 }
 
+// ─── Export modal ───
 async function showExport() {
   document.getElementById('export-modal').classList.add('open');
   await refreshExport();
@@ -369,6 +318,6 @@ async function copyExport() {
   const text = document.getElementById('ex-text').textContent;
   try {
     await navigator.clipboard.writeText(text);
-    Toast.success('Đã copy ' + text.split('\n').filter(Boolean).length + ' dòng');
+    Toast.success('Copied ' + text.split('\n').filter(Boolean).length + ' dòng');
   } catch (e) { Toast.error('Copy: ' + e.message); }
 }

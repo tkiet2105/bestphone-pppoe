@@ -33,6 +33,15 @@ func Init(dbPath string) error {
 	if err := DB.AutoMigrate(&models.Line{}, &models.Session{}, &models.Proxy{}, &models.ProxyCredential{}, &models.Token{}, &models.AccessRule{}); err != nil {
 		return fmt.Errorf("automigrate: %w", err)
 	}
+	// Backfill 1-shot: nếu có column legacy isp_username/isp_password (từ v1.2.x),
+	// copy giá trị sang username/password. Idempotent — chỉ chạy khi username rỗng.
+	hasLegacy := DB.Migrator().HasColumn(&models.Line{}, "isp_username")
+	if hasLegacy {
+		DB.Exec("UPDATE lines SET username = COALESCE(NULLIF(username,''), isp_username), password = COALESCE(NULLIF(password,''), isp_password) WHERE (isp_username <> '' OR isp_password <> '')")
+		log.Printf("[db] backfilled lines.username/password from legacy isp_* columns")
+		_ = DB.Migrator().DropColumn(&models.Line{}, "isp_username")
+		_ = DB.Migrator().DropColumn(&models.Line{}, "isp_password")
+	}
 	return nil
 }
 
