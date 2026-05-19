@@ -29,7 +29,7 @@ func ListIfaces(c *gin.Context) {
 		}
 		// Filter virtual / bestphone runtime ifaces
 		skip := false
-		for _, prefix := range []string{"ppp", "mvbp", "docker", "veth", "br-", "tun", "tap", "wg", "virbr"} {
+		for _, prefix := range []string{"ppp", "mvbp", "mv-", "docker", "veth", "br-", "tun", "tap", "wg", "virbr"} {
 			if strings.HasPrefix(i.Name, prefix) {
 				skip = true
 				break
