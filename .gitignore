@@ -1,0 +1,15 @@
+# Build artifacts
+/bestphone-pppoe
+/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Local config / state (chỉ apply khi clone về /opt/bestphone-pppoe runtime)
+/data.db
+/var/
