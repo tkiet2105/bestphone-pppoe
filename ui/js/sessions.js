@@ -6,6 +6,7 @@ if (!ensureAuth()) {} else {
 let _lines = [];
 let _sessions = [];
 let _nicsPADO = {}; // iface → {pado, ac_name, ...}
+let _selected = new Set(); // session ids đã chọn
 
 const params = new URLSearchParams(location.search);
 const initialLine = params.get('line') || '';
@@ -21,6 +22,7 @@ async function init() {
   });
   document.getElementById('filter-line').addEventListener('change', loadSessions);
   document.getElementById('filter-status').addEventListener('change', loadSessions);
+  _initSelectionUX();
 }
 
 // ─── NIC panel ───
@@ -105,15 +107,22 @@ function lineName(id) {
 function renderSessions() {
   const tbody = document.querySelector('#sessions-table tbody');
   if (!_sessions.length) {
-    tbody.innerHTML = '<tr><td colspan="11" class="muted">Chưa có session.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="muted">Chưa có session.</td></tr>';
+    _updateSelUI();
     return;
   }
+  // Đồng bộ selection — bỏ id không còn tồn tại
+  const currentIds = new Set(_sessions.map(s => s.id));
+  [..._selected].forEach(id => { if (!currentIds.has(id)) _selected.delete(id); });
+
   tbody.innerHTML = _sessions.map(s => {
     const errCell = s.last_error
       ? `<span class="mono small" style="color:#fbbf24" title="${escapeHTML(s.last_error)}">${escapeHTML(s.last_error.length > 50 ? s.last_error.slice(0,50) + '…' : s.last_error)}</span>
          <a href="/logs.html?filter=${encodeURIComponent(s.username)}" target="_blank" class="small">log↗</a>`
       : '<span class="muted small">—</span>';
-    return `<tr>
+    const isSel = _selected.has(s.id);
+    return `<tr class="pp-row${isSel ? ' sel' : ''}" data-sess-id="${s.id}">
+      <td class="cb-cell"><input type="checkbox" class="row-check" ${isSel ? 'checked' : ''} onchange="toggleRowSel(${s.id}, this.checked)"></td>
       <td>${s.id}</td>
       <td>${escapeHTML(lineName(s.line_id))}</td>
       <td class="mono">ppp${s.ppp_unit}</td>
@@ -131,6 +140,223 @@ function renderSessions() {
       </td>
     </tr>`;
   }).join('');
+  _updateSelUI();
+}
+
+// ─── Selection / rubber-band / context menu (mirror Mode 2) ───
+function toggleRowSel(id, checked) {
+  if (checked) _selected.add(id); else _selected.delete(id);
+  const tr = document.querySelector(`tr.pp-row[data-sess-id="${id}"]`);
+  if (tr) tr.classList.toggle('sel', checked);
+  _updateSelUI();
+}
+
+function toggleSelectAll(checked) {
+  if (checked) _sessions.forEach(s => _selected.add(s.id));
+  else _selected.clear();
+  renderSessions();
+}
+
+function clearSelection() {
+  _selected.clear();
+  document.querySelectorAll('tr.pp-row.sel').forEach(tr => tr.classList.remove('sel'));
+  document.querySelectorAll('input.row-check:checked').forEach(cb => cb.checked = false);
+  const h = document.querySelector('input.head-check');
+  if (h) h.checked = false;
+  _updateSelUI();
+}
+
+function _updateSelUI() {
+  const n = _selected.size;
+  const tb = document.getElementById('sel-toolbar');
+  if (tb) tb.style.display = n > 0 ? '' : 'none';
+  const ct = document.getElementById('sel-count');
+  if (ct) ct.textContent = n;
+  const h = document.querySelector('input.head-check');
+  if (h) {
+    const total = _sessions.length;
+    h.checked = n > 0 && n === total;
+    h.indeterminate = n > 0 && n < total;
+  }
+}
+
+function _initSelectionUX() {
+  const table = document.getElementById('sessions-table');
+  if (!table) return;
+  const tbody = table.querySelector('tbody');
+
+  // Rubber-band drag (mousedown ở vùng tbody trống)
+  let band = null, startX = 0, startY = 0, additive = false;
+  const interactiveSel = 'button, input, select, textarea, label, a';
+
+  tbody.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest(interactiveSel)) return;
+    additive = e.ctrlKey || e.metaKey || e.shiftKey;
+    if (!additive) clearSelection();
+    startX = e.clientX; startY = e.clientY;
+    band = document.createElement('div');
+    band.id = 'sel-band';
+    band.style.left = startX + 'px'; band.style.top = startY + 'px';
+    band.style.width = '0px'; band.style.height = '0px';
+    document.body.appendChild(band);
+    e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!band) return;
+    const x = Math.min(startX, e.clientX);
+    const y = Math.min(startY, e.clientY);
+    const w = Math.abs(e.clientX - startX);
+    const h = Math.abs(e.clientY - startY);
+    band.style.left = x + 'px'; band.style.top = y + 'px';
+    band.style.width = w + 'px'; band.style.height = h + 'px';
+    // Apply selection
+    const rect = { left: x, top: y, right: x + w, bottom: y + h };
+    document.querySelectorAll('tr.pp-row[data-sess-id]').forEach(tr => {
+      const r = tr.getBoundingClientRect();
+      const intersect = !(r.right < rect.left || r.left > rect.right || r.bottom < rect.top || r.top > rect.bottom);
+      const id = parseInt(tr.dataset.sessId);
+      if (intersect) _selected.add(id);
+      else if (!additive) _selected.delete(id);
+      tr.classList.toggle('sel', _selected.has(id));
+      const cb = tr.querySelector('input.row-check');
+      if (cb) cb.checked = _selected.has(id);
+    });
+    _updateSelUI();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (band) { band.remove(); band = null; }
+  });
+
+  // Context menu (right-click)
+  tbody.addEventListener('contextmenu', (e) => {
+    const tr = e.target.closest('tr.pp-row[data-sess-id]');
+    if (!tr) return;
+    e.preventDefault();
+    const id = parseInt(tr.dataset.sessId);
+    if (!_selected.has(id)) {
+      // Right-click vào row chưa chọn → select chỉ row này
+      clearSelection();
+      _selected.add(id);
+      tr.classList.add('sel');
+      const cb = tr.querySelector('input.row-check');
+      if (cb) cb.checked = true;
+      _updateSelUI();
+    }
+    _showCtxMenu(e.clientX, e.clientY);
+  });
+}
+
+let _ctxEl = null;
+function _showCtxMenu(x, y) {
+  const ids = [..._selected];
+  if (!ids.length) return;
+  const sel = _sessions.filter(s => _selected.has(s.id));
+  const runCount = sel.filter(s => s.proxy_status === 'running').length;
+  const stopCount = sel.length - runCount;
+  const n = sel.length;
+
+  if (!_ctxEl) {
+    _ctxEl = document.createElement('div');
+    _ctxEl.className = 'ctx-menu';
+    document.body.appendChild(_ctxEl);
+    document.addEventListener('click', (ev) => {
+      if (_ctxEl && !_ctxEl.contains(ev.target)) _ctxEl.style.display = 'none';
+    });
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && _ctxEl) _ctxEl.style.display = 'none';
+    });
+  }
+  _ctxEl.innerHTML = `
+    <div class="ctx-header">${n} session đã chọn</div>
+    <div class="ctx-item${stopCount > 0 ? '' : ' disabled'}" data-act="enable-on">
+      <span class="ctx-icon">▶</span><span style="flex:1">Bật listener${stopCount > 0 ? ` (${stopCount})` : ''}</span>
+    </div>
+    <div class="ctx-item${runCount > 0 ? '' : ' disabled'}" data-act="enable-off">
+      <span class="ctx-icon">■</span><span style="flex:1">Tắt listener${runCount > 0 ? ` (${runCount})` : ''}</span>
+    </div>
+    <div class="ctx-sep"></div>
+    <div class="ctx-item" data-act="rotate">
+      <span class="ctx-icon">↻</span><span style="flex:1">Rotate IP (parallel)</span>
+    </div>
+    <div class="ctx-sep"></div>
+    <div class="ctx-item" data-act="copy-all-pub">
+      <span class="ctx-icon">⎘</span><span style="flex:1">Copy <b>TẤT CẢ</b> creds (public IP)</span>
+    </div>
+    <div class="ctx-item" data-act="copy-all-local">
+      <span class="ctx-icon">⎘</span><span style="flex:1">Copy <b>TẤT CẢ</b> creds (local IP)</span>
+    </div>
+    <div class="ctx-sep"></div>
+    <div class="ctx-item danger" data-act="delete">
+      <span class="ctx-icon">✕</span><span style="flex:1">Xóa ${n} session</span>
+    </div>`;
+  _ctxEl.querySelectorAll('[data-act]').forEach(item => {
+    item.addEventListener('click', async () => {
+      _ctxEl.style.display = 'none';
+      await bulkAction(item.dataset.act);
+    });
+  });
+  _ctxEl.style.display = 'block';
+  // Clamp vào viewport
+  _ctxEl.style.left = '0px'; _ctxEl.style.top = '0px';
+  const mw = _ctxEl.offsetWidth, mh = _ctxEl.offsetHeight;
+  _ctxEl.style.left = Math.min(x, window.innerWidth - mw - 8) + 'px';
+  _ctxEl.style.top = Math.min(y, window.innerHeight - mh - 8) + 'px';
+}
+
+async function bulkAction(act) {
+  const ids = [..._selected];
+  if (!ids.length) return;
+  switch (act) {
+    case 'enable-on':
+    case 'enable-off': {
+      const want = act === 'enable-on';
+      const targets = _sessions.filter(s => _selected.has(s.id) && (s.proxy_status === (want ? 'stopped' : 'running')));
+      if (!targets.length) { Toast.info(`Đã ${want ? 'BẬT' : 'TẮT'} hết`); return; }
+      Toast.info(`Đang ${want ? 'bật' : 'tắt'} ${targets.length}...`);
+      const results = await Promise.allSettled(targets.map(s => Api.setSessionEnabled(s.id, want)));
+      const ok = results.filter(r => r.status === 'fulfilled').length;
+      Toast.success(`Đã ${want ? 'BẬT' : 'TẮT'} ${ok}/${targets.length}`);
+      loadSessions();
+      return;
+    }
+    case 'rotate': {
+      Toast.info(`Rotate batch ${ids.length}...`);
+      try {
+        const r = await Api.rotateBatch(ids, 5);
+        const okN = r.filter(x => !x.error).length;
+        Toast.success(`Rotate: ${okN}/${ids.length} OK`);
+      } catch (e) { Toast.error(e.message); }
+      loadSessions();
+      return;
+    }
+    case 'copy-all-pub':   return copyAllCredsByType('public', ids);
+    case 'copy-all-local': return copyAllCredsByType('local', ids);
+    case 'delete': {
+      if (!confirm(`Xóa ${ids.length} session đã chọn?`)) return;
+      Toast.info(`Đang xóa ${ids.length}...`);
+      const results = await Promise.allSettled(ids.map(id => Api.deleteSession(id)));
+      const okN = results.filter(r => r.status === 'fulfilled').length;
+      _selected.clear();
+      Toast.success(`Đã xóa ${okN}/${ids.length}`);
+      loadSessions();
+      return;
+    }
+  }
+}
+
+async function copyAllCredsByType(type, sessionIds) {
+  try {
+    const all = await Api.exportProxies(type, 'json');
+    const set = new Set(sessionIds);
+    const filtered = all.filter(p => set.has(p.session_id));
+    const lines = filtered.flatMap(p => (p.creds || []).map(c => `${p.ip}:${p.port}:${c.username}:${c.password}`));
+    if (!lines.length) { Toast.info(`Không có cred nào (${type})`); return; }
+    await navigator.clipboard.writeText(lines.join('\n'));
+    Toast.success(`Copied ${lines.length} cred lines · ${filtered.length} session · ${type}`);
+  } catch (e) { Toast.error('Copy: ' + e.message); }
 }
 
 // ─── Create Session(s) Modal (Mode 2 pattern) ───

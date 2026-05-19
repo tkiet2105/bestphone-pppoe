@@ -186,6 +186,53 @@ pre.export-text {
 .nic-tile .tag.pado { background: #f59e0b; color: #000; }
 .nic-tile .tag.line { background: #7c3aed; color: #fff; }
 
+/* Sessions selection */
+#sessions-table tr.sel { background: rgba(37,99,235,0.18); }
+#sessions-table tr.sel:hover { background: rgba(37,99,235,0.24); }
+#sessions-table td.cb-cell { width: 28px; padding: 6px 8px 6px 12px; text-align: center; }
+#sessions-table input.row-check, #sessions-table input.head-check {
+  width: 14px; height: 14px; margin: 0; cursor: pointer; accent-color: #2563eb;
+}
+.sel-toolbar {
+  display: flex; gap: 8px; align-items: center;
+  padding: 6px 10px; background: rgba(37,99,235,0.12);
+  border: 1px solid rgba(37,99,235,0.3); border-radius: 6px;
+  margin-bottom: 10px;
+}
+.sel-toolbar .count { font-weight: 600; color: #93c5fd; }
+.sel-toolbar button { padding: 4px 10px; font-size: 12px; }
+
+/* Rubber-band */
+#sel-band {
+  position: fixed; pointer-events: none; z-index: 9000;
+  border: 1.5px dashed #3b82f6;
+  background: rgba(59,130,246,0.10); border-radius: 3px;
+}
+
+/* Context menu */
+.ctx-menu {
+  position: fixed; z-index: 9100; min-width: 240px;
+  background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  padding: 4px; font-size: 13px; user-select: none;
+  color: #e2e8f0;
+}
+.ctx-menu .ctx-header {
+  padding: 6px 12px 4px; font-size: 11px; font-weight: 600;
+  color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.ctx-menu .ctx-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px; border-radius: 6px; cursor: pointer;
+  transition: background 0.12s;
+}
+.ctx-menu .ctx-item:hover { background: #334155; }
+.ctx-menu .ctx-item.disabled { opacity: 0.45; pointer-events: none; }
+.ctx-menu .ctx-item.danger { color: #fca5a5; }
+.ctx-menu .ctx-item.danger:hover { background: #7f1d1d; color: #fff; }
+.ctx-menu .ctx-sep { height: 1px; background: #334155; margin: 4px 6px; }
+.ctx-menu .ctx-icon { width: 14px; text-align: center; opacity: 0.8; }
+
 .api-group { margin-bottom: 24px; }
 .api-group h3 { margin: 0 0 8px; font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
 .api-row {

@@ -36,8 +36,22 @@
         <button onclick="openCreateSession()">+ Tạo Session(s)</button>
         <button class="secondary" onclick="showExport()">Export</button>
       </div>
+      <!-- Selection toolbar (hiện khi có row được chọn) -->
+      <div class="sel-toolbar" id="sel-toolbar" style="display:none">
+        <span class="count" id="sel-count">0</span> session đã chọn
+        <span class="muted small">·</span>
+        <button class="secondary" onclick="bulkAction('copy-all-pub')">Copy TẤT CẢ creds (public IP)</button>
+        <button class="secondary" onclick="bulkAction('copy-all-local')">Copy TẤT CẢ creds (local IP)</button>
+        <button class="secondary" onclick="bulkAction('rotate')">Rotate</button>
+        <button class="secondary" onclick="bulkAction('enable-on')">Bật</button>
+        <button class="secondary" onclick="bulkAction('enable-off')">Tắt</button>
+        <button class="danger" onclick="bulkAction('delete')">Xóa</button>
+        <span style="flex:1"></span>
+        <button class="secondary" onclick="clearSelection()">Clear</button>
+      </div>
       <table id="sessions-table">
         <thead><tr>
+          <th class="cb-cell"><input type="checkbox" class="head-check" onchange="toggleSelectAll(this.checked)" title="Chọn tất cả"></th>
           <th>ID</th><th>Line</th><th>ppp</th><th>iface</th><th>User</th>
           <th>Status</th><th>Public IP</th><th>Port</th><th>Creds</th>
           <th>Lỗi / Note</th>
