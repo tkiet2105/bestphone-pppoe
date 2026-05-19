@@ -29,19 +29,54 @@ async function loadLines() {
 
 async function openCreateLine() {
   document.getElementById('create-line-modal').classList.add('open');
-  // Load iface dropdown mỗi lần mở modal
+  const sel = document.getElementById('nl-iface');
+  const hint = document.getElementById('nl-iface-hint');
+  sel.innerHTML = '<option>(đang load...)</option>';
+  hint.innerHTML = '';
   try {
     const ifaces = await Api.listIfaces();
-    const sel = document.getElementById('nl-iface');
-    sel.innerHTML = ifaces.map(i => {
-      const ips = i.ips && i.ips.length ? i.ips.join(', ') : '—';
-      const stateBadge = i.state === 'up' ? '🟢' : '⚪';
-      return `<option value="${escapeHTML(i.name)}">${stateBadge} ${escapeHTML(i.name)} (${escapeHTML(ips)})</option>`;
+    // Sort: carrier+free trước, carrier+used giữa, no-carrier cuối
+    const score = i => (i.carrier ? 0 : 2) + (i.used_by_line ? 1 : 0);
+    ifaces.sort((a, b) => score(a) - score(b) || a.name.localeCompare(b.name));
+
+    const opts = ifaces.map(i => {
+      const parts = [i.name];
+      // Link state
+      if (i.carrier) {
+        parts.push(`LINK${i.speed_mbps > 0 ? ' ' + i.speed_mbps + 'M' : ''}`);
+      } else {
+        parts.push('NO-CARRIER');
+      }
+      // IPs
+      if (i.ips && i.ips.length) parts.push(i.ips.join(','));
+      // Line tag
+      if (i.used_by_line) parts.push(`★ đang dùng Line #${i.used_by_line} (${i.used_by_name})`);
+      else if (i.carrier) parts.push('— free');
+      const label = parts.join(' · ');
+
+      const disabled = !i.carrier || !!i.used_by_line;
+      const prefix = !i.carrier ? '⚪' : (i.used_by_line ? '🔒' : '🟢');
+      return `<option value="${escapeHTML(i.name)}" ${disabled ? 'disabled' : ''}>${prefix} ${escapeHTML(label)}</option>`;
     }).join('');
-    document.getElementById('nl-iface-hint').textContent =
-      'Chọn NIC physical đang cắm PPPoE upstream (line ISP). Iface có IP = đang gắn LAN/WAN khác — vẫn dial được nếu rp-pppoe layer 2.';
+
+    sel.innerHTML = opts;
+    // Pick first non-disabled
+    const firstOk = ifaces.find(i => i.carrier && !i.used_by_line);
+    if (firstOk) sel.value = firstOk.name;
+
+    const freeCount = ifaces.filter(i => i.carrier && !i.used_by_line).length;
+    const usedCount = ifaces.filter(i => i.used_by_line).length;
+    const noLinkCount = ifaces.filter(i => !i.carrier).length;
+    hint.innerHTML = `
+      <strong>🟢 ${freeCount} sẵn sàng</strong> ·
+      🔒 ${usedCount} đã có line ·
+      ⚪ ${noLinkCount} không cáp.
+      Chỉ NIC có LINK (carrier) và chưa gắn line khác mới chọn được.
+      Để biết NIC nào có ISP PPPoE cắm → vào trang <a href="/sessions.html">Sessions</a> bấm "PADO probe".
+    `;
   } catch (e) {
     Toast.error('Load ifaces: ' + e.message);
+    sel.innerHTML = '<option value="">(error)</option>';
   }
 }
 
