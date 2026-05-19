@@ -46,6 +46,12 @@ const Api = (() => {
     listIfaces: () => _req('GET', '/ifaces'),
     probeIfaces: (ifaces) => _req('POST', '/ifaces/probe', ifaces ? { ifaces } : {}),
 
+    // logs
+    getLogs: (params) => {
+      const q = params ? '?' + new URLSearchParams(params).toString() : '';
+      return _req('GET', '/logs' + q);
+    },
+
     // rules
     listRules: (params) => {
       const q = params ? '?' + new URLSearchParams(params).toString() : '';
@@ -146,6 +152,7 @@ function renderNav(active) {
         <a href="/sessions.html" class="${active==='sessions'?'active':''}">Sessions</a>
         <a href="/rules.html" class="${active==='rules'?'active':''}">Rules</a>
         <a href="/export.html" class="${active==='export'?'active':''}">Export</a>
+        <a href="/logs.html" class="${active==='logs'?'active':''}">Logs</a>
         <a href="/api.html" class="${active==='api'?'active':''}">API</a>
       </nav>
       <span class="spacer"></span>

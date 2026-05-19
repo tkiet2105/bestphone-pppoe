@@ -86,6 +86,13 @@ const SPEC = [
     ],
   },
   {
+    group: 'Logs',
+    items: [
+      { method: 'GET', path: '/api/v1/logs?source=pppd&lines=200&since=15+minutes+ago&filter=AuthNak', desc: 'Tail journalctl. source=backend|pppd|all. since theo systemd format. Optional filter (substring match, case-insensitive). Trả text/plain.',
+        resp: '2026-05-19T08:29:26 debian8 pppd[532120]: sent [PAP AuthReq id=0x1 user="u_xxx" ...]\\n... [PAP AuthNak id=0x1 ""]' },
+    ],
+  },
+  {
     group: 'Access Rules (Whitelist/Blacklist)',
     items: [
       { method: 'GET', path: '/api/v1/rules', desc: 'List rules. Query: scope=global|session, session_id, action=allow|deny, kind=domain|ip.' },
