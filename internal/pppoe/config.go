@@ -3,6 +3,7 @@ package pppoe
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -64,6 +65,11 @@ ipparam bp-sess-%d
 
 func RemovePeerFile(sessionID uint) {
 	_ = os.Remove(filepath.Join(peerDir, fmt.Sprintf("bp-sess-%d", sessionID)))
+}
+
+// RemoveMacvlan — xóa macvlan iface mvbp<sid> nếu tồn tại. Idempotent.
+func RemoveMacvlan(sessionID uint) {
+	_ = exec.Command("ip", "link", "del", MacvlanName(sessionID)).Run()
 }
 
 // MacvlanName — tên macvlan đảm bảo ngắn (<15 ký tự cho linux iface).

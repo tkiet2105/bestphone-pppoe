@@ -81,6 +81,7 @@ func DeleteLine(c *gin.Context) {
 		}
 		_ = pppoe.M.Hangup(s.Id)
 		pppoe.RemovePeerFile(s.Id)
+		pppoe.RemoveMacvlan(s.Id)
 		pppoe.RemoveSessionSecrets(s.Username)
 		db.DB.Delete(&s)
 	}

@@ -60,6 +60,10 @@
           <input type="checkbox" id="ns-random" onchange="toggleRandomSingle()" style="width:auto;margin-right:6px">
           Sinh random user/pass tự động (test/demo)
         </label>
+        <div class="muted small" style="margin-top:4px;color:#f59e0b">
+          ⚠ Cred random KHÔNG khớp BRAS thật → dial sẽ AuthNak → status=error.
+          Chỉ dùng để test pipeline (alloc port + iface), KHÔNG để rotate với ISP thật.
+        </div>
       </div>
       <div class="form-row"><label>Username (PPPoE)</label>
         <div class="row" style="gap:6px">
@@ -91,6 +95,10 @@
           <input type="checkbox" id="bs-random" onchange="toggleRandomBulk()" style="width:auto;margin-right:6px">
           Sinh random N user/pass tự động (test/demo)
         </label>
+        <div class="muted small" style="margin-top:4px;color:#f59e0b">
+          ⚠ N cred random → N AuthNak liên tiếp. ISP có thể tạm khóa MAC/IP nếu spam.
+          Dùng riêng cho test alloc pipeline.
+        </div>
       </div>
       <div class="form-row" id="bs-count-row" style="display:none">
         <label>Số session (N)</label>
