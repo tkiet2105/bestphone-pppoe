@@ -168,10 +168,6 @@ function clearSelection() {
 
 function _updateSelUI() {
   const n = _selected.size;
-  const tb = document.getElementById('sel-toolbar');
-  if (tb) tb.style.display = n > 0 ? '' : 'none';
-  const ct = document.getElementById('sel-count');
-  if (ct) ct.textContent = n;
   const h = document.querySelector('input.head-check');
   if (h) {
     const total = _sessions.length;
@@ -354,8 +350,9 @@ async function copyAllCredsByType(type, sessionIds) {
     const filtered = all.filter(p => set.has(p.session_id));
     const lines = filtered.flatMap(p => (p.creds || []).map(c => `${p.ip}:${p.port}:${c.username}:${c.password}`));
     if (!lines.length) { Toast.info(`Không có cred nào (${type})`); return; }
-    await navigator.clipboard.writeText(lines.join('\n'));
-    Toast.success(`Copied ${lines.length} cred lines · ${filtered.length} session · ${type}`);
+    const ok = await copyText(lines.join('\n'));
+    if (ok) Toast.success(`Copied ${lines.length} cred lines · ${filtered.length} session · ${type}`);
+    else Toast.error('Browser từ chối copy (HTTPS required)');
   } catch (e) { Toast.error('Copy: ' + e.message); }
 }
 
@@ -542,8 +539,7 @@ async function refreshExport() {
 
 async function copyExport() {
   const text = document.getElementById('ex-text').textContent;
-  try {
-    await navigator.clipboard.writeText(text);
-    Toast.success('Copied ' + text.split('\n').filter(Boolean).length + ' dòng');
-  } catch (e) { Toast.error('Copy: ' + e.message); }
+  const ok = await copyText(text);
+  if (ok) Toast.success('Copied ' + text.split('\n').filter(Boolean).length + ' dòng');
+  else Toast.error('Browser từ chối copy');
 }

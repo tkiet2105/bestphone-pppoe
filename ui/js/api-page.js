@@ -166,10 +166,9 @@ async function copyCurl(method, path, body, noAuth) {
     curl += ` \\\n  -H 'Content-Type: application/json' \\\n  -d '${body}'`;
   }
   curl += ' | jq .';
-  try {
-    await navigator.clipboard.writeText(curl);
-    Toast.success('Copied curl: ' + method + ' ' + path);
-  } catch (e) { Toast.error('Copy: ' + e.message); }
+  const ok = await copyText(curl);
+  if (ok) Toast.success('Copied curl: ' + method + ' ' + path);
+  else Toast.error('Browser từ chối copy');
 }
 
 function filterApi() {

@@ -78,8 +78,7 @@ function toggleAuto() {
 
 async function copyLog() {
   const text = document.getElementById('log-view').textContent;
-  try {
-    await navigator.clipboard.writeText(text);
-    Toast.success('Copied ' + text.split('\n').length + ' lines');
-  } catch (e) { Toast.error(e.message); }
+  const ok = await copyText(text);
+  if (ok) Toast.success('Copied ' + text.split('\n').length + ' lines');
+  else Toast.error('Browser từ chối copy');
 }

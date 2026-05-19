@@ -37,10 +37,9 @@
     }
     async function copyAll() {
       const text = document.getElementById('ex-text').textContent;
-      try {
-        await navigator.clipboard.writeText(text);
-        Toast.success('Đã copy ' + text.split('\n').filter(Boolean).length + ' dòng');
-      } catch (e) { Toast.error(e.message); }
+      const ok = await copyText(text);
+      if (ok) Toast.success('Đã copy ' + text.split('\n').filter(Boolean).length + ' dòng');
+      else Toast.error('Browser từ chối copy');
     }
   </script>
 </body>
