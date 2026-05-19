@@ -107,7 +107,7 @@ function lineName(id) {
 function renderSessions() {
   const tbody = document.querySelector('#sessions-table tbody');
   if (!_sessions.length) {
-    tbody.innerHTML = '<tr><td colspan="12" class="muted">Chưa có session.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="muted">Chưa có session nào. Bấm "+ Tạo session" để tạo.</td></tr>';
     _updateSelUI();
     return;
   }
@@ -131,10 +131,10 @@ function renderSessions() {
       <td>${statusBadge(s.status)}</td>
       <td class="mono">${escapeHTML(s.public_ip || s.ip || '—')}</td>
       <td class="mono">${s.proxy_port || '—'}</td>
-      <td>${s.creds_count} <a href="#" onclick="event.preventDefault();openCreds(${s.id},${s.proxy_id})">edit</a></td>
+      <td>${s.creds_count} <a href="#" onclick="event.preventDefault();openCreds(${s.id},${s.proxy_id})">sửa</a></td>
       <td>${errCell}</td>
       <td class="actions">
-        <button class="small" onclick="rotateSession(${s.id})">Rotate</button>
+        <button class="small" onclick="rotateSession(${s.id})">Đổi IP</button>
         <button class="small secondary" onclick="toggleEnabled(${s.id},'${s.proxy_status}')">${s.proxy_status === 'running' ? 'Tắt' : 'Bật'}</button>
         <button class="small danger" onclick="deleteSession(${s.id})">Xóa</button>
       </td>
@@ -243,16 +243,9 @@ function _initSelectionUX() {
       // Drag commit
       band.remove(); band = null;
     } else if (pendingRowId !== null) {
-      // Click row đơn lẻ
-      if (additive) {
-        // Toggle row này
-        if (_selected.has(pendingRowId)) _selected.delete(pendingRowId);
-        else _selected.add(pendingRowId);
-      } else {
-        // Replace: chỉ row này
-        _selected.clear();
-        _selected.add(pendingRowId);
-      }
+      // Click row → TOGGLE (giữ selection khác — multi-select bằng click)
+      if (_selected.has(pendingRowId)) _selected.delete(pendingRowId);
+      else _selected.add(pendingRowId);
       // Re-render sel state
       document.querySelectorAll('tr.pp-row[data-sess-id]').forEach(tr => {
         const id = parseInt(tr.dataset.sessId);
@@ -262,6 +255,9 @@ function _initSelectionUX() {
         if (cb) cb.checked = sel;
       });
       _updateSelUI();
+    } else if (startX !== 0 && !dragStarted) {
+      // mousedown trên vùng tbody trống + mouseup không drag → clear all
+      clearSelection();
     }
     startX = 0; startY = 0; pendingRowId = null; dragStarted = false;
   });
@@ -306,27 +302,34 @@ function _showCtxMenu(x, y) {
     });
   }
   _ctxEl.innerHTML = `
-    <div class="ctx-header">${n} session đã chọn</div>
+    <div class="ctx-header">Đã chọn ${n} session</div>
     <div class="ctx-item${stopCount > 0 ? '' : ' disabled'}" data-act="enable-on">
-      <span class="ctx-icon">▶</span><span style="flex:1">Bật listener${stopCount > 0 ? ` (${stopCount})` : ''}</span>
+      <span class="ctx-icon">▶</span><span style="flex:1">Bật proxy${stopCount > 0 ? ` (${stopCount})` : ''}</span>
     </div>
     <div class="ctx-item${runCount > 0 ? '' : ' disabled'}" data-act="enable-off">
-      <span class="ctx-icon">■</span><span style="flex:1">Tắt listener${runCount > 0 ? ` (${runCount})` : ''}</span>
+      <span class="ctx-icon">■</span><span style="flex:1">Tắt proxy${runCount > 0 ? ` (${runCount})` : ''}</span>
     </div>
     <div class="ctx-sep"></div>
     <div class="ctx-item" data-act="rotate">
-      <span class="ctx-icon">↻</span><span style="flex:1">Rotate IP (parallel)</span>
+      <span class="ctx-icon">↻</span><span style="flex:1">Đổi IP (chạy song song)</span>
+    </div>
+    <div class="ctx-sep"></div>
+    <div class="ctx-item" data-act="copy-default-pub">
+      <span class="ctx-icon">⎘</span><span style="flex:1">Sao chép tài khoản <b>mặc định</b> (IP công cộng)</span>
+    </div>
+    <div class="ctx-item" data-act="copy-default-local">
+      <span class="ctx-icon">⎘</span><span style="flex:1">Sao chép tài khoản <b>mặc định</b> (IP nội bộ)</span>
     </div>
     <div class="ctx-sep"></div>
     <div class="ctx-item" data-act="copy-all-pub">
-      <span class="ctx-icon">⎘</span><span style="flex:1">Copy <b>TẤT CẢ</b> creds (public IP)</span>
+      <span class="ctx-icon">⎘</span><span style="flex:1">Sao chép <b>TẤT CẢ</b> tài khoản (IP công cộng)</span>
     </div>
     <div class="ctx-item" data-act="copy-all-local">
-      <span class="ctx-icon">⎘</span><span style="flex:1">Copy <b>TẤT CẢ</b> creds (local IP)</span>
+      <span class="ctx-icon">⎘</span><span style="flex:1">Sao chép <b>TẤT CẢ</b> tài khoản (IP nội bộ)</span>
     </div>
     <div class="ctx-sep"></div>
     <div class="ctx-item danger" data-act="delete">
-      <span class="ctx-icon">✕</span><span style="flex:1">Xóa ${n} session</span>
+      <span class="ctx-icon">✕</span><span style="flex:1">Xóa ${n} session đã chọn</span>
     </div>`;
   _ctxEl.querySelectorAll('[data-act]').forEach(item => {
     item.addEventListener('click', async () => {
@@ -350,50 +353,60 @@ async function bulkAction(act) {
     case 'enable-off': {
       const want = act === 'enable-on';
       const targets = _sessions.filter(s => _selected.has(s.id) && (s.proxy_status === (want ? 'stopped' : 'running')));
-      if (!targets.length) { Toast.info(`Đã ${want ? 'BẬT' : 'TẮT'} hết`); return; }
-      Toast.info(`Đang ${want ? 'bật' : 'tắt'} ${targets.length}...`);
+      if (!targets.length) { Toast.info(`Đã ${want ? 'bật' : 'tắt'} hết rồi`); return; }
+      Toast.info(`Đang ${want ? 'bật' : 'tắt'} proxy cho ${targets.length} session...`);
       const results = await Promise.allSettled(targets.map(s => Api.setSessionEnabled(s.id, want)));
       const ok = results.filter(r => r.status === 'fulfilled').length;
-      Toast.success(`Đã ${want ? 'BẬT' : 'TẮT'} ${ok}/${targets.length}`);
+      Toast.success(`Đã ${want ? 'bật' : 'tắt'} ${ok}/${targets.length}`);
       loadSessions();
       return;
     }
     case 'rotate': {
-      Toast.info(`Rotate batch ${ids.length}...`);
+      Toast.info(`Đang đổi IP cho ${ids.length} session...`);
       try {
         const r = await Api.rotateBatch(ids, 5);
         const okN = r.filter(x => !x.error).length;
-        Toast.success(`Rotate: ${okN}/${ids.length} OK`);
+        Toast.success(`Đổi IP xong: ${okN}/${ids.length} thành công`);
       } catch (e) { Toast.error(e.message); }
       loadSessions();
       return;
     }
-    case 'copy-all-pub':   return copyAllCredsByType('public', ids);
-    case 'copy-all-local': return copyAllCredsByType('local', ids);
+    case 'copy-all-pub':       return copyCredsByType('public', ids, false);
+    case 'copy-all-local':     return copyCredsByType('local',  ids, false);
+    case 'copy-default-pub':   return copyCredsByType('public', ids, true);
+    case 'copy-default-local': return copyCredsByType('local',  ids, true);
     case 'delete': {
-      if (!confirm(`Xóa ${ids.length} session đã chọn?`)) return;
-      Toast.info(`Đang xóa ${ids.length}...`);
+      if (!confirm(`Xóa ${ids.length} session đã chọn? Hành động không thể hoàn tác.`)) return;
+      Toast.info(`Đang xóa ${ids.length} session...`);
       const results = await Promise.allSettled(ids.map(id => Api.deleteSession(id)));
       const okN = results.filter(r => r.status === 'fulfilled').length;
       _selected.clear();
-      Toast.success(`Đã xóa ${okN}/${ids.length}`);
+      Toast.success(`Đã xóa ${okN}/${ids.length} session`);
       loadSessions();
       return;
     }
   }
 }
 
-async function copyAllCredsByType(type, sessionIds) {
+// copyCredsByType — sao chép tài khoản proxy theo định dạng `ip:port:user:pass`.
+//   type: "public" | "local" — chọn nguồn IP
+//   defaultOnly: true → chỉ lấy cred label="default" (1 dòng / session)
+//                false → lấy tất cả cred enabled
+async function copyCredsByType(type, sessionIds, defaultOnly) {
   try {
     const all = await Api.exportProxies(type, 'json');
     const set = new Set(sessionIds);
     const filtered = all.filter(p => set.has(p.session_id));
-    const lines = filtered.flatMap(p => (p.creds || []).map(c => `${p.ip}:${p.port}:${c.username}:${c.password}`));
-    if (!lines.length) { Toast.info(`Không có cred nào (${type})`); return; }
+    const lines = filtered.flatMap(p => (p.creds || [])
+      .filter(c => !defaultOnly || c.label === 'default')
+      .map(c => `${p.ip}:${p.port}:${c.username}:${c.password}`));
+    const ipLabel = type === 'public' ? 'IP công cộng' : 'IP nội bộ';
+    const credLabel = defaultOnly ? 'mặc định' : 'tất cả';
+    if (!lines.length) { Toast.info(`Không có tài khoản nào để sao chép (${credLabel} · ${ipLabel})`); return; }
     const ok = await copyText(lines.join('\n'));
-    if (ok) Toast.success(`Copied ${lines.length} cred lines · ${filtered.length} session · ${type}`);
-    else Toast.error('Browser từ chối copy (HTTPS required)');
-  } catch (e) { Toast.error('Copy: ' + e.message); }
+    if (ok) Toast.success(`Đã sao chép ${lines.length} dòng · ${filtered.length} session · ${credLabel} · ${ipLabel}`);
+    else Toast.error('Trình duyệt từ chối sao chép');
+  } catch (e) { Toast.error('Lỗi sao chép: ' + e.message); }
 }
 
 // ─── Create Session(s) Modal (Mode 2 pattern) ───
@@ -412,10 +425,10 @@ function updateSessModalUI() {
   const info = document.getElementById('sm-line-info');
   if (line) {
     if (line.username) {
-      info.innerHTML = `Cred ISP của line: <span class="mono">${escapeHTML(line.username)}</span> / <span class="mono">••••</span>`;
+      info.innerHTML = `Tài khoản ISP: <span class="mono">${escapeHTML(line.username)}</span> / <span class="mono">••••</span>`;
       info.style.color = '#86efac';
     } else {
-      info.innerHTML = '⚠ Line CHƯA SET cred ISP — Edit line trước hoặc tạo session sẽ fail.';
+      info.innerHTML = '⚠ Line này CHƯA có tài khoản ISP — sửa line trước, nếu không session sẽ không quay số được.';
       info.style.color = '#fbbf24';
     }
   }
@@ -435,20 +448,20 @@ async function submitCreateSession() {
     proxyAuth.username = document.getElementById('sm-proxy-user').value.trim();
     proxyAuth.password = document.getElementById('sm-proxy-pass').value.trim();
     if (!proxyAuth.username || !proxyAuth.password) {
-      Toast.error('Manual mode cần proxy username + password');
+      Toast.error('Chế độ tự nhập cần điền cả tên đăng nhập và mật khẩu');
       return;
     }
   }
   try {
     if (count === 1) {
       const r = await Api.createSession(lineId, { proxy_auth: proxyAuth });
-      Toast.success(`Session ${r.session.id} ${r.session.status}`);
+      Toast.success(`Đã tạo session ${r.session.id} (${r.session.status})`);
     } else {
-      Toast.info(`Bulk ${count} sessions...`);
+      Toast.info(`Đang tạo ${count} session...`);
       const r = await Api.bulkCreateSessions(lineId, { count, proxy_auth: proxyAuth });
       const ok = r.filter(x => x.status === 'connected').length;
       const err = r.filter(x => x.status === 'error').length;
-      Toast.success(`Bulk: ${ok} connected · ${err} error / ${r.length}`);
+      Toast.success(`Đã tạo: ${ok} thành công · ${err} lỗi / ${r.length}`);
       if (err > 0) {
         const errMsgs = [...new Set(r.filter(x => x.error).map(x => x.error))];
         errMsgs.slice(0, 2).forEach(m => Toast.info('Lý do: ' + m));
@@ -456,33 +469,33 @@ async function submitCreateSession() {
     }
     closeModal('create-sess-modal');
     loadSessions();
-  } catch (e) { Toast.error('Tạo session: ' + e.message); }
+  } catch (e) { Toast.error('Lỗi tạo session: ' + e.message); }
 }
 
 // ─── Session actions ───
 async function rotateSession(id) {
   try {
-    Toast.info('Rotate ' + id + '...');
+    Toast.info('Đang đổi IP session ' + id + '...');
     const r = await Api.rotateSession(id);
-    Toast.success(`Rotate OK: ${r.old_ip || '—'} → ${r.new_ip || '—'}${r.same_ip ? ' (same)' : ''}`);
+    Toast.success(`Đổi IP xong: ${r.old_ip || '—'} → ${r.new_ip || '—'}${r.same_ip ? ' (cùng IP)' : ''}`);
     loadSessions();
-  } catch (e) { Toast.error('Rotate: ' + e.message); }
+  } catch (e) { Toast.error('Lỗi đổi IP: ' + e.message); }
 }
 
 async function toggleEnabled(id, currentStatus) {
   try {
     const enabled = currentStatus !== 'running';
     await Api.setSessionEnabled(id, enabled);
-    Toast.success(enabled ? 'Bật' : 'Tắt');
+    Toast.success(enabled ? 'Đã bật proxy' : 'Đã tắt proxy');
     loadSessions();
   } catch (e) { Toast.error(e.message); }
 }
 
 async function deleteSession(id) {
-  if (!confirm(`Xóa session ${id} (hangup + remove proxy)?`)) return;
+  if (!confirm(`Xóa session ${id}? Hành động không thể hoàn tác.`)) return;
   try {
     await Api.deleteSession(id);
-    Toast.success('Đã xóa');
+    Toast.success('Đã xóa session');
     loadSessions();
   } catch (e) { Toast.error(e.message); }
 }
@@ -521,7 +534,7 @@ async function loadCreds() {
       <td class="mono">${escapeHTML(r.password)}</td>
       <td><input type="checkbox" ${r.enabled?'checked':''} onchange="toggleCred(${r.id},this.checked)"></td>
       <td><button class="small danger" onclick="delCred(${r.id})">Xóa</button></td>
-    </tr>`).join('') || '<tr><td colspan="6" class="muted">(empty — proxy mở no-auth)</td></tr>';
+    </tr>`).join('') || '<tr><td colspan="6" class="muted">(chưa có tài khoản — proxy đang mở, không cần đăng nhập)</td></tr>';
   } catch (e) { Toast.error(e.message); }
 }
 
@@ -531,25 +544,25 @@ async function submitCred() {
     username: document.getElementById('cm-user').value.trim(),
     password: document.getElementById('cm-pass').value.trim(),
   };
-  if (!data.username || !data.password) { Toast.error('username + password bắt buộc'); return; }
+  if (!data.username || !data.password) { Toast.error('Cần điền cả tên đăng nhập và mật khẩu'); return; }
   try {
     await Api.createCred(_curPid, data);
     document.getElementById('cm-label').value = '';
     document.getElementById('cm-user').value = '';
     document.getElementById('cm-pass').value = '';
     loadCreds();
-    Toast.success('Thêm cred OK');
+    Toast.success('Đã thêm tài khoản');
   } catch (e) { Toast.error(e.message); }
 }
 
 async function submitBulkCred() {
   const count = parseInt(document.getElementById('cm-bulk-count').value) || 0;
   const prefix = document.getElementById('cm-bulk-prefix').value.trim() || 'u';
-  if (count < 1 || count > 200) { Toast.error('Count phải 1..200'); return; }
+  if (count < 1 || count > 200) { Toast.error('Số lượng phải từ 1 đến 200'); return; }
   try {
     await Api.bulkCreds(_curPid, { count, prefix });
     loadCreds();
-    Toast.success(`Sinh ${count} cred`);
+    Toast.success(`Đã sinh ${count} tài khoản`);
   } catch (e) { Toast.error(e.message); }
 }
 

@@ -9,13 +9,13 @@
   <main>
     <div class="card">
       <div class="row" style="margin-bottom:12px">
-        <h2 style="margin:0;flex:1">PPPoE Lines</h2>
-        <button onclick="openCreateLine()">+ Tạo Line</button>
+        <h2 style="margin:0;flex:1">Danh sách line PPPoE</h2>
+        <button onclick="openCreateLine()">+ Tạo line mới</button>
       </div>
       <table id="lines-table">
         <thead><tr>
-          <th>ID</th><th>Tên</th><th>NIC iface</th><th>ISP user</th><th>Macvlan?</th>
-          <th>Max</th><th>Sessions</th><th class="actions">Hành động</th>
+          <th>ID</th><th>Tên</th><th>Cổng mạng</th><th>Tài khoản ISP</th><th>Mỗi session 1 MAC?</th>
+          <th>Số session tối đa</th><th>Đang chạy</th><th class="actions">Hành động</th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -24,25 +24,28 @@
 
   <div class="modal-bg" id="create-line-modal">
     <div class="modal">
-      <h3>Tạo Line PPPoE</h3>
-      <div class="form-row"><label>Tên</label><input id="nl-name" placeholder="FPT-Q1"></div>
-      <div class="form-row"><label>NIC iface (physical)</label>
-        <select id="nl-iface"><option value="">(đang load...)</option></select>
+      <h3>Tạo line PPPoE mới</h3>
+      <div class="form-row"><label>Tên gợi nhớ</label><input id="nl-name" placeholder="VD: FPT-Q1"></div>
+      <div class="form-row"><label>Cổng mạng vật lý (cắm dây ISP)</label>
+        <select id="nl-iface"><option value="">(đang tải...)</option></select>
         <div class="muted small" id="nl-iface-hint" style="margin-top:4px"></div>
       </div>
-      <div class="form-row"><label>Username (PPPoE ISP)</label>
+      <div class="form-row"><label>Tài khoản ISP (tên đăng nhập PPPoE)</label>
         <input id="nl-user" placeholder="vd: fbr00chgt">
       </div>
-      <div class="form-row"><label>Password (PPPoE ISP)</label>
+      <div class="form-row"><label>Mật khẩu ISP</label>
         <input id="nl-pass" placeholder="vd: 3b4r7U5L">
       </div>
       <div class="muted small" style="margin-top:-6px;margin-bottom:8px;color:#94a3b8">
-        Cred này dùng cho TẤT CẢ session của line. Mỗi session khác MAC, BRAS treat như N gateway riêng cùng account.
+        Tài khoản này dùng cho TẤT CẢ session của line. Mỗi session sẽ có 1 IP công cộng riêng (nhờ MAC khác nhau).
       </div>
-      <div class="form-row"><label>Use macvlan?</label>
-        <select id="nl-macvlan"><option value="true">Có (mỗi session 1 MAC — Recommended)</option><option value="false">Không</option></select>
+      <div class="form-row"><label>Mỗi session dùng 1 địa chỉ MAC riêng?</label>
+        <select id="nl-macvlan">
+          <option value="true">Có (khuyến nghị — để có IP riêng cho từng session)</option>
+          <option value="false">Không (tất cả session dùng cùng MAC của cổng)</option>
+        </select>
       </div>
-      <div class="form-row"><label>Max sessions</label><input type="number" id="nl-max" value="8"></div>
+      <div class="form-row"><label>Số session tối đa cho line này</label><input type="number" id="nl-max" value="8"></div>
       <div class="actions">
         <button class="secondary" onclick="closeModal('create-line-modal')">Hủy</button>
         <button onclick="submitCreateLine()">Tạo</button>

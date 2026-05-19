@@ -10,38 +10,38 @@
     <!-- NIC status panel -->
     <div class="card" id="nic-panel">
       <div class="row" style="margin-bottom:8px">
-        <h2 style="margin:0;flex:1">Mạng — Physical NIC</h2>
-        <button class="secondary" onclick="loadNics()">Refresh</button>
-        <button onclick="probeNics()" id="probe-btn">PADO probe</button>
+        <h2 style="margin:0;flex:1">Cổng mạng vật lý</h2>
+        <button class="secondary" onclick="loadNics()">Tải lại</button>
+        <button onclick="probeNics()" id="probe-btn">Quét cổng có ISP</button>
       </div>
-      <div id="nic-list" class="muted">(đang load...)</div>
+      <div id="nic-list" class="muted">(đang tải...)</div>
       <div class="muted small" style="margin-top:8px">
-        PADO probe gửi PADI broadcast trên các NIC có carrier để biết cổng nào có ISP PPPoE (BRAS).
-        Không gửi auth — không có rủi ro AuthNak. Mỗi NIC ~7s, sequential.
+        Quét cổng dùng để phát hiện cổng nào có dây ISP cắm vào (nhận tín hiệu PPPoE).
+        An toàn — không gửi tên đăng nhập / mật khẩu. Mỗi cổng mất khoảng 7 giây.
       </div>
     </div>
 
     <div class="card">
       <div class="row" style="margin-bottom:12px">
-        <h2 style="margin:0;flex:1">Sessions <span id="filter-info" class="muted small"></span></h2>
-        <select id="filter-line" style="max-width:200px"><option value="">Tất cả lines</option></select>
+        <h2 style="margin:0;flex:1">Danh sách session <span id="filter-info" class="muted small"></span></h2>
+        <select id="filter-line" style="max-width:200px"><option value="">Tất cả line</option></select>
         <select id="filter-status" style="max-width:160px">
-          <option value="">Tất cả status</option>
-          <option value="connected">connected</option>
-          <option value="dialing">dialing</option>
-          <option value="error">error</option>
-          <option value="disconnected">disconnected</option>
+          <option value="">Tất cả trạng thái</option>
+          <option value="connected">Đã kết nối</option>
+          <option value="dialing">Đang quay số</option>
+          <option value="error">Lỗi</option>
+          <option value="disconnected">Đã ngắt</option>
         </select>
-        <button onclick="loadSessions()">Refresh</button>
-        <button onclick="openCreateSession()">+ Tạo Session(s)</button>
-        <button class="secondary" onclick="showExport()">Export</button>
+        <button onclick="loadSessions()">Tải lại</button>
+        <button onclick="openCreateSession()">+ Tạo session</button>
+        <button class="secondary" onclick="showExport()">Sao chép proxy</button>
       </div>
       <table id="sessions-table">
         <thead><tr>
           <th class="cb-cell"><input type="checkbox" class="head-check" onchange="toggleSelectAll(this.checked)" title="Chọn tất cả"></th>
-          <th>#</th><th>Line</th><th>ppp</th><th>iface</th><th>User</th>
-          <th>Status</th><th>Public IP</th><th>Port</th><th>Creds</th>
-          <th>Lỗi / Note</th>
+          <th>#</th><th>Line</th><th>ppp</th><th>Cổng PPP</th><th>Tên đăng nhập</th>
+          <th>Trạng thái</th><th>IP công cộng</th><th>Cổng proxy</th><th>Số tài khoản</th>
+          <th>Lỗi</th>
           <th class="actions">Hành động</th>
         </tr></thead>
         <tbody></tbody>
@@ -49,30 +49,30 @@
     </div>
   </main>
 
-  <!-- Create session modal (Mode 2 pattern: Line + count + proxy_auth) -->
+  <!-- Tạo session modal -->
   <div class="modal-bg" id="create-sess-modal">
     <div class="modal" style="min-width:480px">
-      <h3>Tạo Session(s)</h3>
-      <div class="form-row"><label>Line</label>
+      <h3>Tạo session mới</h3>
+      <div class="form-row"><label>Line (lấy tài khoản ISP từ line)</label>
         <select id="sm-line" onchange="updateSessModalUI()"></select>
         <div class="muted small" id="sm-line-info" style="margin-top:4px"></div>
       </div>
-      <div class="form-row"><label>Số session</label>
+      <div class="form-row"><label>Số lượng session cần tạo</label>
         <input type="number" id="sm-count" value="1" min="1" max="50">
-        <div class="muted small" style="margin-top:4px">1–50. Mỗi session dùng cred ISP của line + MAC random.</div>
+        <div class="muted small" style="margin-top:4px">Tối đa 50. Tất cả đều dùng tài khoản ISP của line, mỗi cái 1 IP riêng.</div>
       </div>
-      <div class="form-row"><label>Proxy auth mode (client SOCKS5/HTTP auth — KHÔNG phải ISP)</label>
+      <div class="form-row"><label>Tài khoản để khách hàng đăng nhập proxy</label>
         <select id="sm-proxy-mode" onchange="updateSessModalUI()">
-          <option value="random">Random (backend sinh u&lt;4hex&gt;/&lt;8hex&gt;)</option>
-          <option value="manual">Manual (nhập thủ công)</option>
-          <option value="none">None (proxy mở, no-auth)</option>
+          <option value="random">Tự sinh ngẫu nhiên</option>
+          <option value="manual">Tự nhập tên + mật khẩu</option>
+          <option value="none">Không cần đăng nhập (proxy mở)</option>
         </select>
       </div>
       <div id="sm-manual-rows" style="display:none">
-        <div class="form-row"><label>Proxy username</label>
+        <div class="form-row"><label>Tên đăng nhập proxy</label>
           <input id="sm-proxy-user">
         </div>
-        <div class="form-row"><label>Proxy password</label>
+        <div class="form-row"><label>Mật khẩu proxy</label>
           <input id="sm-proxy-pass">
         </div>
       </div>
@@ -83,36 +83,36 @@
     </div>
   </div>
 
-  <!-- Creds modal (Mode 2 pattern: 2 section single + bulk) -->
+  <!-- Tài khoản proxy của session -->
   <div class="modal-bg" id="creds-modal">
     <div class="modal" style="min-width:640px">
-      <h3>Credentials cho session <span id="cm-sid"></span> (proxy <span id="cm-pid"></span>)</h3>
+      <h3>Tài khoản proxy của session <span id="cm-sid"></span> (cổng proxy <span id="cm-pid"></span>)</h3>
       <table class="creds-table" id="creds-table">
-        <thead><tr><th>ID</th><th>Label</th><th>User</th><th>Pass</th><th>Enabled</th><th></th></tr></thead>
+        <thead><tr><th>ID</th><th>Nhãn</th><th>Tên đăng nhập</th><th>Mật khẩu</th><th>Bật</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
 
       <hr style="border:0;border-top:1px solid #334155;margin:16px 0">
-      <h4 style="margin:0 0 8px;font-size:14px">Thêm 1 cred</h4>
+      <h4 style="margin:0 0 8px;font-size:14px">Thêm 1 tài khoản</h4>
       <div class="row" style="margin-top:8px;gap:6px">
-        <input id="cm-label" placeholder="label (optional)" style="max-width:140px">
-        <input id="cm-user" placeholder="username">
-        <button class="secondary small" type="button" onclick="document.getElementById('cm-user').value='u'+credRandHex(4)" title="Random user">🎲</button>
-        <input id="cm-pass" placeholder="password">
-        <button class="secondary small" type="button" onclick="document.getElementById('cm-pass').value=credRandHex(8)" title="Random pass">🎲</button>
+        <input id="cm-label" placeholder="nhãn (tùy chọn)" style="max-width:140px">
+        <input id="cm-user" placeholder="tên đăng nhập">
+        <button class="secondary small" type="button" onclick="document.getElementById('cm-user').value='u'+credRandHex(4)" title="Sinh tên ngẫu nhiên">🎲</button>
+        <input id="cm-pass" placeholder="mật khẩu">
+        <button class="secondary small" type="button" onclick="document.getElementById('cm-pass').value=credRandHex(8)" title="Sinh mật khẩu ngẫu nhiên">🎲</button>
         <button onclick="submitCred()">Thêm</button>
       </div>
 
       <hr style="border:0;border-top:1px solid #334155;margin:16px 0">
-      <h4 style="margin:0 0 8px;font-size:14px">Bulk N cred ngẫu nhiên</h4>
+      <h4 style="margin:0 0 8px;font-size:14px">Sinh nhiều tài khoản ngẫu nhiên</h4>
       <div class="row" style="margin-top:8px;gap:6px">
-        <label class="muted small" style="flex:none">Count:</label>
+        <label class="muted small" style="flex:none">Số lượng:</label>
         <input type="number" id="cm-bulk-count" value="10" min="1" max="200" style="max-width:100px">
-        <label class="muted small" style="flex:none">Prefix:</label>
+        <label class="muted small" style="flex:none">Tiền tố tên:</label>
         <input id="cm-bulk-prefix" value="u" style="max-width:100px">
-        <button onclick="submitBulkCred()">Sinh N</button>
+        <button onclick="submitBulkCred()">Sinh</button>
       </div>
-      <div class="muted small" style="margin-top:4px">Backend sinh: <span class="mono">&lt;prefix&gt;&lt;4hex&gt;</span> / <span class="mono">&lt;8hex&gt;</span></div>
+      <div class="muted small" style="margin-top:4px">Mẫu: <span class="mono">&lt;tiền tố&gt;&lt;4 ký tự ngẫu nhiên&gt;</span> / <span class="mono">&lt;8 ký tự ngẫu nhiên&gt;</span></div>
 
       <div class="actions">
         <button class="secondary" onclick="closeModal('creds-modal')">Đóng</button>
@@ -120,16 +120,16 @@
     </div>
   </div>
 
-  <!-- Export modal -->
+  <!-- Sao chép proxy modal -->
   <div class="modal-bg" id="export-modal">
     <div class="modal" style="min-width:640px">
-      <h3>Export Proxies</h3>
+      <h3>Sao chép danh sách proxy</h3>
       <div class="row" style="margin-bottom:12px">
-        <select id="ex-type"><option value="public">Public IP</option><option value="local">Local IP</option></select>
-        <button onclick="refreshExport()">Refresh</button>
-        <button class="secondary" onclick="copyExport()">Copy</button>
+        <select id="ex-type"><option value="public">IP công cộng</option><option value="local">IP nội bộ</option></select>
+        <button onclick="refreshExport()">Tải lại</button>
+        <button class="secondary" onclick="copyExport()">Sao chép</button>
       </div>
-      <pre class="export-text" id="ex-text">(đang load...)</pre>
+      <pre class="export-text" id="ex-text">(đang tải...)</pre>
       <div class="actions">
         <button class="secondary" onclick="closeModal('export-modal')">Đóng</button>
       </div>
