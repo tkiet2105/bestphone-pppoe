@@ -86,6 +86,19 @@ const SPEC = [
     ],
   },
   {
+    group: 'Access Rules (Whitelist/Blacklist)',
+    items: [
+      { method: 'GET', path: '/api/v1/rules', desc: 'List rules. Query: scope=global|session, session_id, action=allow|deny, kind=domain|ip.' },
+      { method: 'POST', path: '/api/v1/rules', desc: 'Tạo rule. scope=global → toàn cluster. scope=session → chỉ session_id đó.',
+        body: '{ "scope":"global", "kind":"domain", "action":"deny", "value":"*.facebook.com", "note":"block social" }',
+        resp: '{ "id":1, "scope":"global", "kind":"domain", "action":"deny", "value":"*.facebook.com" }' },
+      { method: 'PUT', path: '/api/v1/rules/:id', desc: 'Update action/value/note.',
+        body: '{ "action":"allow" }' },
+      { method: 'DELETE', path: '/api/v1/rules/:id', desc: 'Xóa rule. Trigger ReloadRules hot-swap.' },
+    ],
+    note: 'Deny-wins. Listener cache rules per-proxy; mutation auto reload không close listener. Domain support *.suffix; IP support đơn lẻ hoặc CIDR.',
+  },
+  {
     group: 'Tokens',
     items: [
       { method: 'GET',    path: '/api/v1/tokens', desc: 'List token (mask, chỉ show last4).' },

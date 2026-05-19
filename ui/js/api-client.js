@@ -46,6 +46,15 @@ const Api = (() => {
     listIfaces: () => _req('GET', '/ifaces'),
     probeIfaces: (ifaces) => _req('POST', '/ifaces/probe', ifaces ? { ifaces } : {}),
 
+    // rules
+    listRules: (params) => {
+      const q = params ? '?' + new URLSearchParams(params).toString() : '';
+      return _req('GET', '/rules' + q);
+    },
+    createRule: (data) => _req('POST', '/rules', data),
+    updateRule: (id, data) => _req('PUT', `/rules/${id}`, data),
+    deleteRule: (id) => _req('DELETE', `/rules/${id}`),
+
     // lines
     listLines: () => _req('GET', '/lines'),
     createLine: (data) => _req('POST', '/lines', data),
@@ -135,6 +144,7 @@ function renderNav(active) {
       <nav>
         <a href="/lines.html" class="${active==='lines'?'active':''}">Lines</a>
         <a href="/sessions.html" class="${active==='sessions'?'active':''}">Sessions</a>
+        <a href="/rules.html" class="${active==='rules'?'active':''}">Rules</a>
         <a href="/export.html" class="${active==='export'?'active':''}">Export</a>
         <a href="/api.html" class="${active==='api'?'active':''}">API</a>
       </nav>

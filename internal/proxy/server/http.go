@@ -37,6 +37,15 @@ func (l *listener) handleHTTP(conn net.Conn, firstByte byte) {
 		if host == "" {
 			host = req.Host
 		}
+		// host có dạng "example.com:443" — strip port để filter
+		hostOnly := host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			hostOnly = h
+		}
+		if l.rules != nil && !l.rules.allowed(hostOnly) {
+			writeHTTPStatus(conn, 403, "Forbidden by ruleset", "")
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		upstream, err := dialBound(ctx, l.iface(), "tcp", host)
@@ -57,6 +66,14 @@ func (l *listener) handleHTTP(conn net.Conn, firstByte byte) {
 	host := req.URL.Host
 	if host == "" {
 		host = req.Host
+	}
+	hostOnly := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		hostOnly = h
+	}
+	if l.rules != nil && !l.rules.allowed(hostOnly) {
+		writeHTTPStatus(conn, 403, "Forbidden by ruleset", "")
+		return
 	}
 	if !strings.Contains(host, ":") {
 		host += ":80"

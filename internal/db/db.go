@@ -30,7 +30,7 @@ func Init(dbPath string) error {
 	sqlDB, _ := g.DB()
 	sqlDB.SetMaxOpenConns(1) // SQLite không thích nhiều writer
 	DB = g
-	if err := DB.AutoMigrate(&models.Line{}, &models.Session{}, &models.Proxy{}, &models.ProxyCredential{}, &models.Token{}); err != nil {
+	if err := DB.AutoMigrate(&models.Line{}, &models.Session{}, &models.Proxy{}, &models.ProxyCredential{}, &models.Token{}, &models.AccessRule{}); err != nil {
 		return fmt.Errorf("automigrate: %w", err)
 	}
 	return nil

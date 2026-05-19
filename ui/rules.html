@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Rules — bestphone-pppoe</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <main>
+    <div class="card">
+      <h2>Access Rules — Whitelist / Blacklist</h2>
+      <p class="muted small">
+        <strong>Deny-wins</strong>: 1 rule deny match → BLOCK. Có rule allow trong scope → <em>strict mode</em>: chỉ host match allow mới qua.
+        Domain dạng <span class="mono">example.com</span> (exact) hoặc <span class="mono">*.example.com</span> (suffix).
+        IP dạng <span class="mono">1.2.3.4</span> hoặc CIDR <span class="mono">10.0.0.0/8</span>.
+      </p>
+    </div>
+
+    <!-- Global -->
+    <div class="card">
+      <div class="row" style="margin-bottom:12px">
+        <h3 style="margin:0;flex:1">Global rules <span class="muted small" id="g-count"></span></h3>
+        <button onclick="openCreateRule('global')">+ Rule global</button>
+      </div>
+      <table id="g-table">
+        <thead><tr>
+          <th>ID</th><th>Action</th><th>Kind</th><th>Value</th><th>Note</th><th class="actions"></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <!-- Session-scope -->
+    <div class="card">
+      <div class="row" style="margin-bottom:12px">
+        <h3 style="margin:0;flex:1">Session rules</h3>
+        <select id="s-pick" style="max-width:280px" onchange="loadSessionRules()">
+          <option value="">— chọn session —</option>
+        </select>
+        <button onclick="openCreateRule('session')" id="s-add-btn" disabled>+ Rule</button>
+      </div>
+      <table id="s-table">
+        <thead><tr>
+          <th>ID</th><th>Action</th><th>Kind</th><th>Value</th><th>Note</th><th class="actions"></th>
+        </tr></thead>
+        <tbody><tr><td colspan="6" class="muted">Chọn session trên dropdown để xem/quản lý rules.</td></tr></tbody>
+      </table>
+    </div>
+  </main>
+
+  <!-- Create modal -->
+  <div class="modal-bg" id="rule-modal">
+    <div class="modal">
+      <h3 id="rm-title">Tạo rule</h3>
+      <input type="hidden" id="rm-scope">
+      <input type="hidden" id="rm-session-id">
+      <div class="form-row"><label>Action</label>
+        <select id="rm-action">
+          <option value="deny">DENY (blacklist)</option>
+          <option value="allow">ALLOW (whitelist — kích hoạt strict mode)</option>
+        </select>
+      </div>
+      <div class="form-row"><label>Kind</label>
+        <select id="rm-kind" onchange="updateRulePlaceholder()">
+          <option value="domain">Domain</option>
+          <option value="ip">IP / CIDR</option>
+        </select>
+      </div>
+      <div class="form-row"><label>Value</label>
+        <input id="rm-value" placeholder="example.com hoặc *.example.com">
+      </div>
+      <div class="form-row"><label>Note (optional)</label><input id="rm-note"></div>
+      <div class="actions">
+        <button class="secondary" onclick="closeModal('rule-modal')">Hủy</button>
+        <button onclick="submitRule()">Tạo</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api-client.js"></script>
+  <script src="/js/rules.js"></script>
+</body>
+</html>

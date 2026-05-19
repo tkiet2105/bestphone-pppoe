@@ -57,3 +57,27 @@ type Token struct {
 	Label     string    `gorm:"size:64" json:"label"`
 	CreatedAt time.Time `json:"created_at"`
 }
+
+// Access rule constants
+const (
+	RuleScopeGlobal  = "global"
+	RuleScopeSession = "session"
+	RuleKindDomain   = "domain" // value: exact hoặc *.suffix
+	RuleKindIP       = "ip"     // value: IP đơn hoặc CIDR
+	RuleActionAllow  = "allow"
+	RuleActionDeny   = "deny"
+)
+
+// AccessRule — whitelist/blacklist cho proxy listener.
+// Deny-wins: 1 match deny → block. Allow chỉ kích hoạt strict mode (nếu có entry
+// allow trong scope hiệu lực, chỉ host match allow mới qua).
+type AccessRule struct {
+	Id        uint      `gorm:"primaryKey" json:"id"`
+	Scope     string    `gorm:"size:16;index;not null" json:"scope"`               // global | session
+	SessionId *uint     `gorm:"index" json:"session_id,omitempty"`                 // NULL khi global
+	Kind      string    `gorm:"size:16;not null" json:"kind"`                      // domain | ip
+	Action    string    `gorm:"size:16;not null" json:"action"`                    // allow | deny
+	Value     string    `gorm:"size:256;not null" json:"value"`                    // domain hoặc CIDR/IP
+	Note      string    `gorm:"size:256" json:"note"`
+	CreatedAt time.Time `json:"created_at"`
+}

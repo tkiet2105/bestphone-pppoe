@@ -115,6 +115,12 @@ func (l *listener) handleSocks5(conn net.Conn, firstByte byte) {
 	port := binary.BigEndian.Uint16(portBuf[:])
 	addr := net.JoinHostPort(host, strconv.Itoa(int(port)))
 
+	// Access control: deny-wins
+	if l.rules != nil && !l.rules.allowed(host) {
+		_ = socks5Reply(conn, socks5RepNotAllowed)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	upstream, err := dialBound(ctx, l.iface(), "tcp", addr)

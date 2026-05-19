@@ -15,14 +15,16 @@ import (
 )
 
 type Manager struct {
-	db         *gorm.DB
-	hub        *events.Hub
-	mu         sync.Mutex
-	listeners  map[uint]*listener // proxyID → listener
-	portMin    int
-	portMax    int
-	rootCtx    context.Context
-	rootCancel context.CancelFunc
+	db          *gorm.DB
+	hub         *events.Hub
+	mu          sync.Mutex
+	listeners   map[uint]*listener // proxyID → listener
+	globalRules []Rule              // compiled global rules cache
+	globalMu    sync.RWMutex
+	portMin     int
+	portMax     int
+	rootCtx     context.Context
+	rootCancel  context.CancelFunc
 }
 
 var M *Manager
@@ -86,15 +88,18 @@ func (m *Manager) Start(proxyID uint) error {
 
 	ctx, cancel := context.WithCancel(m.rootCtx)
 	l := &listener{
-		proxyID: p.Id,
-		port:    p.Port,
-		ifaceFn: m.makeIfaceFn(p.SessionId),
-		creds:   &credSet{},
-		ln:      ln,
-		ctx:     ctx,
-		cancel:  cancel,
+		proxyID:   p.Id,
+		sessionID: p.SessionId,
+		port:      p.Port,
+		ifaceFn:   m.makeIfaceFn(p.SessionId),
+		creds:     &credSet{},
+		rules:     &ruleSet{},
+		ln:        ln,
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 	l.creds.set(m.loadCreds(p.Id))
+	l.rules.set(m.mergedRulesFor(p.SessionId))
 
 	l.wg.Add(1)
 	go l.acceptLoop()
@@ -150,6 +155,7 @@ func (m *Manager) ReloadCreds(proxyID uint) {
 }
 
 func (m *Manager) RestoreAll() {
+	m.LoadGlobalRules()
 	var proxies []models.Proxy
 	m.db.Where("status = ?", "running").Find(&proxies)
 	for _, p := range proxies {
@@ -184,4 +190,64 @@ func (m *Manager) makeIfaceFn(sessionID uint) func() string {
 		}
 		return s.Iface
 	}
+}
+
+// LoadGlobalRules — query DB và cache global rules.
+func (m *Manager) LoadGlobalRules() {
+	var rs []models.AccessRule
+	m.db.Where("scope = ?", models.RuleScopeGlobal).Find(&rs)
+	compiled := compile(rs)
+	m.globalMu.Lock()
+	m.globalRules = compiled
+	m.globalMu.Unlock()
+}
+
+// ReloadGlobalRules — re-query + push xuống tất cả listener.
+func (m *Manager) ReloadGlobalRules() {
+	m.LoadGlobalRules()
+	m.mu.Lock()
+	listeners := make([]*listener, 0, len(m.listeners))
+	for _, l := range m.listeners {
+		listeners = append(listeners, l)
+	}
+	m.mu.Unlock()
+	for _, l := range listeners {
+		l.rules.set(m.mergedRulesFor(l.sessionID))
+	}
+	if m.hub != nil {
+		m.hub.Publish("rules.global_changed", map[string]any{})
+	}
+}
+
+// ReloadSessionRules — push session-scoped rules tới listener của session đó.
+func (m *Manager) ReloadSessionRules(sessionID uint) {
+	m.mu.Lock()
+	var target *listener
+	for _, l := range m.listeners {
+		if l.sessionID == sessionID {
+			target = l
+			break
+		}
+	}
+	m.mu.Unlock()
+	if target == nil {
+		return
+	}
+	target.rules.set(m.mergedRulesFor(sessionID))
+	if m.hub != nil {
+		m.hub.Publish("rules.session_changed", map[string]any{"session_id": sessionID})
+	}
+}
+
+// mergedRulesFor — global rules + session-scope rules.
+func (m *Manager) mergedRulesFor(sessionID uint) []Rule {
+	m.globalMu.RLock()
+	out := make([]Rule, 0, len(m.globalRules))
+	out = append(out, m.globalRules...)
+	m.globalMu.RUnlock()
+
+	var rs []models.AccessRule
+	m.db.Where("scope = ? AND session_id = ?", models.RuleScopeSession, sessionID).Find(&rs)
+	out = append(out, compile(rs)...)
+	return out
 }

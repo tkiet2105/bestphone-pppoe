@@ -12,9 +12,11 @@ import (
 // listener — wrap quanh 1 net.Listener cho 1 proxy. Multiplex SOCKS5 / HTTP CONNECT.
 type listener struct {
 	proxyID   uint
+	sessionID uint
 	port      int
 	ifaceFn   func() string // closure để lookup iface mỗi connection (session.Iface có thể đổi sau rotate)
 	creds     *credSet
+	rules     *ruleSet // merged global + session rules, hot-reload
 	ln        net.Listener
 	ctx       context.Context
 	cancel    context.CancelFunc
