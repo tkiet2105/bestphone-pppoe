@@ -115,7 +115,7 @@ function renderSessions() {
   const currentIds = new Set(_sessions.map(s => s.id));
   [..._selected].forEach(id => { if (!currentIds.has(id)) _selected.delete(id); });
 
-  tbody.innerHTML = _sessions.map(s => {
+  tbody.innerHTML = _sessions.map((s, idx) => {
     const errCell = s.last_error
       ? `<span class="mono small" style="color:#fbbf24" title="${escapeHTML(s.last_error)}">${escapeHTML(s.last_error.length > 50 ? s.last_error.slice(0,50) + '…' : s.last_error)}</span>
          <a href="/logs.html?filter=${encodeURIComponent(s.username)}" target="_blank" class="small">log↗</a>`
@@ -123,7 +123,7 @@ function renderSessions() {
     const isSel = _selected.has(s.id);
     return `<tr class="pp-row${isSel ? ' sel' : ''}" data-sess-id="${s.id}">
       <td class="cb-cell"><input type="checkbox" class="row-check" ${isSel ? 'checked' : ''} onchange="toggleRowSel(${s.id}, this.checked)"></td>
-      <td>${s.id}</td>
+      <td title="DB id: ${s.id}">${idx + 1}</td>
       <td>${escapeHTML(lineName(s.line_id))}</td>
       <td class="mono">ppp${s.ppp_unit}</td>
       <td class="mono">${escapeHTML(s.iface || '—')}</td>
