@@ -64,6 +64,7 @@ const Api = (() => {
     // lines
     listLines: () => _req('GET', '/lines'),
     createLine: (data) => _req('POST', '/lines', data),
+    updateLine: (id, data) => _req('PUT', `/lines/${id}`, data),
     deleteLine: (id) => _req('POST', `/lines/${id}/delete`),
 
     // sessions

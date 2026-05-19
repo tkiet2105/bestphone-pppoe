@@ -142,8 +142,6 @@ function renderSessions() {
 
 function openCreateSession() {
   document.getElementById('create-sess-modal').classList.add('open');
-  document.getElementById('ns-rand-user').checked = false;
-  document.getElementById('ns-rand-pass').checked = false;
   document.getElementById('ns-user').value = '';
   document.getElementById('ns-pass').value = '';
   document.getElementById('ns-mac').value = '';
@@ -164,29 +162,20 @@ function randomMac() {
 }
 
 function updateSingleUI() {
-  const ru = document.getElementById('ns-rand-user').checked;
-  const rp = document.getElementById('ns-rand-pass').checked;
-  const u = document.getElementById('ns-user');
-  const p = document.getElementById('ns-pass');
-  if (ru) { u.value = randomUser(); u.disabled = true; }
-  else    { u.disabled = false; }
-  if (rp) { p.value = randomPass(); p.disabled = true; }
-  else    { p.disabled = false; }
-  document.getElementById('ns-warn').style.display = (ru || rp) ? '' : 'none';
+  const lineId = parseInt(document.getElementById('ns-line').value);
+  const line = _lines.find(l => l.id === lineId);
+  const info = document.getElementById('ns-line-info');
+  if (line) {
+    if (line.isp_username) {
+      info.innerHTML = `Sẽ dùng cred ISP của line: <span class="mono">${escapeHTML(line.isp_username)}</span> / <span class="mono">••••</span>`;
+      info.style.color = '#86efac';
+    } else {
+      info.innerHTML = '⚠ Line CHƯA SET cred ISP — cần override bên dưới hoặc Edit line trước.';
+      info.style.color = '#fbbf24';
+    }
+  }
 }
 
-function rollUserSingle() {
-  document.getElementById('ns-user').value = randomUser();
-  document.getElementById('ns-rand-user').checked = false;
-  document.getElementById('ns-user').disabled = false;
-  updateSingleUI();
-}
-function rollPassSingle() {
-  document.getElementById('ns-pass').value = randomPass();
-  document.getElementById('ns-rand-pass').checked = false;
-  document.getElementById('ns-pass').disabled = false;
-  updateSingleUI();
-}
 function rollRandomMac() {
   document.getElementById('ns-mac').value = randomMac();
 }
@@ -197,13 +186,14 @@ async function submitCreateSession() {
   const data = {
     username: document.getElementById('ns-user').value.trim(),
     password: document.getElementById('ns-pass').value.trim(),
-    mac: document.getElementById('ns-mac').value.trim(),
+    mac: document.getElementById('ns-mac').value.trim() || randomMac(),
   };
   const lineId = parseInt(document.getElementById('ns-line').value);
-  if (!data.username || !data.password) { Toast.error('user/pass bắt buộc'); return; }
+  // Cred resolve: empty → backend dùng line cred
   try {
     const r = await Api.createSession(lineId, data);
-    Toast.success(`Session ${r.session.id} ${r.session.status} (user: ${data.username})`);
+    const credLabel = data.username || '(line cred)';
+    Toast.success(`Session ${r.session.id} ${r.session.status} (cred: ${credLabel}, MAC: ${data.mac})`);
     closeModal('create-sess-modal');
     loadSessions();
   } catch (e) { Toast.error('Tạo session: ' + e.message); }
@@ -211,61 +201,48 @@ async function submitCreateSession() {
 
 function openBulkSession() {
   document.getElementById('bulk-sess-modal').classList.add('open');
-  document.getElementById('bs-rand-user').checked = false;
-  document.getElementById('bs-rand-pass').checked = false;
   document.getElementById('bs-creds').value = '';
   document.getElementById('bs-count').value = '10';
-  document.getElementById('bs-fixed-user').value = '';
-  document.getElementById('bs-fixed-pass').value = '';
   updateBulkUI();
 }
 
 function updateBulkUI() {
-  const ru = document.getElementById('bs-rand-user').checked;
-  const rp = document.getElementById('bs-rand-pass').checked;
-  const anyRand = ru || rp;
-  document.getElementById('bs-textarea-row').style.display = anyRand ? 'none' : '';
-  document.getElementById('bs-template-rows').style.display = anyRand ? '' : 'none';
-  document.getElementById('bs-fixed-user-row').style.display = (!ru && rp) ? '' : 'none';
-  document.getElementById('bs-fixed-pass-row').style.display = (ru && !rp) ? '' : 'none';
-  let hint;
-  if (!ru && !rp)     hint = 'Mode: textarea — nhập từng cred mỗi dòng (real production).';
-  else if (ru && rp)  hint = 'Mode: cả user và pass random — chỉ test pipeline.';
-  else if (ru && !rp) hint = 'Mode: random N username, password cố định bạn nhập (test cùng pass).';
-  else                hint = 'Mode: username cố định, sinh N password random.';
-  document.getElementById('bs-mode-hint').textContent = hint;
+  const lineId = parseInt(document.getElementById('bs-line').value);
+  const line = _lines.find(l => l.id === lineId);
+  const info = document.getElementById('bs-line-info');
+  if (line) {
+    if (line.isp_username) {
+      info.innerHTML = `Sẽ dùng cred ISP của line: <span class="mono">${escapeHTML(line.isp_username)}</span> / <span class="mono">••••</span> × N MAC random.`;
+      info.style.color = '#86efac';
+    } else {
+      info.innerHTML = '⚠ Line CHƯA SET cred ISP — cần Edit line hoặc dùng textarea override.';
+      info.style.color = '#fbbf24';
+    }
+  }
 }
 
 async function submitBulk() {
   const lineId = parseInt(document.getElementById('bs-line').value);
-  const ru = document.getElementById('bs-rand-user').checked;
-  const rp = document.getElementById('bs-rand-pass').checked;
-  let creds;
-  if (!ru && !rp) {
-    // Mode A: textarea full
-    const raw = document.getElementById('bs-creds').value.trim();
-    creds = raw.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
+  const n = parseInt(document.getElementById('bs-count').value) || 0;
+  const raw = document.getElementById('bs-creds').value.trim();
+
+  let payload;
+  if (raw) {
+    // Override mode: textarea custom
+    const creds = raw.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
       const parts = line.split(/\s+/);
-      return { username: parts[0], password: parts[1], mac: parts[2] || '' };
+      return { username: parts[0], password: parts[1], mac: parts[2] || randomMac() };
     });
+    if (!creds.length) { Toast.error('Textarea trống'); return; }
+    payload = { count: creds.length, creds };
   } else {
-    // Mode B/C/D: template
-    const n = parseInt(document.getElementById('bs-count').value) || 0;
+    // Default mode: N + line cred + MAC random
     if (n <= 0 || n > 100) { Toast.error('N phải trong 1..100'); return; }
-    const fixedUser = document.getElementById('bs-fixed-user').value.trim();
-    const fixedPass = document.getElementById('bs-fixed-pass').value.trim();
-    if (!ru && !fixedUser) { Toast.error('Cần nhập username cố định'); return; }
-    if (!rp && !fixedPass) { Toast.error('Cần nhập password cố định'); return; }
-    creds = Array.from({ length: n }, () => ({
-      username: ru ? randomUser() : fixedUser,
-      password: rp ? randomPass() : fixedPass,
-      mac: randomMac(),
-    }));
+    payload = { count: n, auto_mac: true };
   }
-  if (!creds.length) { Toast.error('Cần ít nhất 1 cred'); return; }
   try {
-    Toast.info(`Bulk ${creds.length} sessions — chạy nền (mỗi dial ~30s)...`);
-    const r = await Api.bulkCreateSessions(lineId, { count: creds.length, creds });
+    Toast.info(`Bulk ${payload.count} sessions — chạy nền (mỗi dial ~3s)...`);
+    const r = await Api.bulkCreateSessions(lineId, payload);
     const connected = r.filter(x => x.status === 'connected').length;
     const errored = r.filter(x => x.status === 'error').length;
     const created = r.filter(x => x.session_id > 0).length;

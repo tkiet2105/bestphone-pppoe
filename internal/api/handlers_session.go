@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/rand"
 	"fmt"
 	"strconv"
 	"strings"
@@ -14,14 +15,21 @@ import (
 	proxysrv "github.com/tkiet2105/bestphone-pppoe/internal/proxy/server"
 )
 
+// randMacGo — sinh MAC random LAA `02:xx:xx:xx:xx:xx`.
+func randMacGo() string {
+	var b [5]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", b[0], b[1], b[2], b[3], b[4])
+}
+
 // allocMu — serialize allocation cua ppp_unit + proxy port trong bulk create.
 // SQLite WAL với maxOpenConns=1 đã serialize TX, nhưng (SELECT free → INSERT)
 // là 2 step rời → race nếu N goroutines song song. Mutex này thắt eo lại.
 var allocMu sync.Mutex
 
 type createSessionReq struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
+	Username string `json:"username"` // optional — fallback line.IspUsername
+	Password string `json:"password"` // optional — fallback line.IspPassword
 	MAC      string `json:"mac"`
 }
 
@@ -46,8 +54,9 @@ func CreateLineSession(c *gin.Context) {
 }
 
 type bulkSessReq struct {
-	Count int                `json:"count" binding:"required"`
-	Creds []createSessionReq `json:"creds"`
+	Count       int                `json:"count" binding:"required"`
+	Creds       []createSessionReq `json:"creds"`
+	AutoMac     bool               `json:"auto_mac"` // mode N-only: backend tự sinh MAC random, dùng line cred
 }
 
 func CreateLineSessionsBulk(c *gin.Context) {
@@ -65,6 +74,17 @@ func CreateLineSessionsBulk(c *gin.Context) {
 	if req.Count <= 0 || req.Count > 100 {
 		fail(c, 400, "count must be 1..100")
 		return
+	}
+	// Mode N-only: nếu auto_mac=true HOẶC không có creds → sinh N entries dùng line cred + MAC random.
+	if req.AutoMac || len(req.Creds) == 0 {
+		if line.IspUsername == "" || line.IspPassword == "" {
+			fail(c, 400, "line chưa có isp_username/isp_password — cần PUT /lines/:id trước hoặc gửi creds explicit")
+			return
+		}
+		req.Creds = make([]createSessionReq, req.Count)
+		for i := 0; i < req.Count; i++ {
+			req.Creds[i] = createSessionReq{MAC: randMacGo()}
+		}
 	}
 	if len(req.Creds) < req.Count {
 		fail(c, 400, fmt.Sprintf("need %d creds, got %d", req.Count, len(req.Creds)))
@@ -118,6 +138,21 @@ func truncateErr(s string, n int) string {
 }
 
 func createSessionAndDial(line models.Line, req createSessionReq) (*models.Session, *models.Proxy, error) {
+	// Resolve cred: req override → fallback line.IspUsername/IspPassword.
+	// Lý do: 1 PPPoE account ISP cấp ⇒ N session same cred, khác MAC (BRAS treat
+	// như N gateway độc lập cùng account). User KHÔNG cần nhập cred mỗi session.
+	username := req.Username
+	password := req.Password
+	if username == "" {
+		username = line.IspUsername
+	}
+	if password == "" {
+		password = line.IspPassword
+	}
+	if username == "" || password == "" {
+		return nil, nil, fmt.Errorf("cần cred PPPoE: nhập trong line.isp_username/password hoặc override per-session")
+	}
+
 	// === Alloc phase (serialized) — đảm bảo ppp_unit + port không trùng khi N goroutines song song ===
 	allocMu.Lock()
 	pppUnit, err := pppoe.AllocPppUnit(db.DB)
@@ -128,8 +163,8 @@ func createSessionAndDial(line models.Line, req createSessionReq) (*models.Sessi
 	sess := models.Session{
 		LineId:   line.Id,
 		PppUnit:  pppUnit,
-		Username: req.Username,
-		Password: req.Password,
+		Username: username,
+		Password: password,
 		MAC:      req.MAC,
 		Status:   models.StatusDisconnected,
 	}
@@ -152,12 +187,14 @@ func createSessionAndDial(line models.Line, req createSessionReq) (*models.Sessi
 	allocMu.Unlock()
 	// === End alloc ===
 
-	// Seed cred mặc định (mode multi-cred từ đầu — user có thể thêm/xóa sau)
+	// Seed cred mặc định cho proxy listener (CLIENT auth — KHÔNG phải PPPoE auth).
+	// Mặc định lấy cùng cred ISP để user copy-paste 1 chỗ, có thể đổi thành random
+	// sau qua /proxies/:id/credentials.
 	cred := models.ProxyCredential{
 		ProxyId:  p.Id,
 		Label:    "default",
-		Username: req.Username,
-		Password: req.Password,
+		Username: username,
+		Password: password,
 		Enabled:  true,
 	}
 	db.DB.Create(&cred)

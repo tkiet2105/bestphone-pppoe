@@ -14,6 +14,8 @@ import (
 type createLineReq struct {
 	Name        string `json:"name" binding:"required"`
 	Iface       string `json:"iface" binding:"required"`
+	IspUsername string `json:"isp_username"`
+	IspPassword string `json:"isp_password"`
 	UseMacvlan  bool   `json:"use_macvlan"`
 	MaxSessions int    `json:"max_sessions"`
 }
@@ -30,6 +32,8 @@ func CreateLine(c *gin.Context) {
 	line := models.Line{
 		Name:        req.Name,
 		Iface:       req.Iface,
+		IspUsername: req.IspUsername,
+		IspPassword: req.IspPassword,
 		UseMacvlan:  req.UseMacvlan,
 		MaxSessions: req.MaxSessions,
 	}
@@ -37,6 +41,45 @@ func CreateLine(c *gin.Context) {
 		fail(c, 500, err.Error())
 		return
 	}
+	ok(c, line)
+}
+
+type updateLineReq struct {
+	Name        *string `json:"name"`
+	IspUsername *string `json:"isp_username"`
+	IspPassword *string `json:"isp_password"`
+	UseMacvlan  *bool   `json:"use_macvlan"`
+	MaxSessions *int    `json:"max_sessions"`
+}
+
+func UpdateLine(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	var line models.Line
+	if err := db.DB.First(&line, id).Error; err != nil {
+		fail(c, 404, "not found")
+		return
+	}
+	var req updateLineReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, 400, err.Error())
+		return
+	}
+	if req.Name != nil {
+		line.Name = *req.Name
+	}
+	if req.IspUsername != nil {
+		line.IspUsername = *req.IspUsername
+	}
+	if req.IspPassword != nil {
+		line.IspPassword = *req.IspPassword
+	}
+	if req.UseMacvlan != nil {
+		line.UseMacvlan = *req.UseMacvlan
+	}
+	if req.MaxSessions != nil {
+		line.MaxSessions = *req.MaxSessions
+	}
+	db.DB.Save(&line)
 	ok(c, line)
 }
 

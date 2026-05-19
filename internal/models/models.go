@@ -3,10 +3,15 @@ package models
 
 import "time"
 
+// Line — 1 line PPPoE = 1 NIC + 1 cặp ISP cred. Tất cả session của line dùng
+// chung cred này (mỗi session khác MAC qua macvlan, BRAS treat như N gateway
+// độc lập cùng account — FPT/VNPT/Viettel đều support).
 type Line struct {
 	Id          uint      `gorm:"primaryKey" json:"id"`
 	Name        string    `gorm:"size:128;not null" json:"name"`
 	Iface       string    `gorm:"size:32;not null" json:"iface"`
+	IspUsername string    `gorm:"size:128" json:"isp_username"` // PPPoE PAP/CHAP user shared cho line
+	IspPassword string    `gorm:"size:256" json:"isp_password"` // PPPoE password
 	UseMacvlan  bool      `gorm:"default:false" json:"use_macvlan"`
 	MaxSessions int       `gorm:"default:8" json:"max_sessions"`
 	CreatedAt   time.Time `json:"created_at"`

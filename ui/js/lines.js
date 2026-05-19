@@ -12,16 +12,19 @@ async function loadLines() {
         <td>${r.id}</td>
         <td>${escapeHTML(r.name)}</td>
         <td class="mono">${escapeHTML(r.iface)}</td>
+        <td class="mono small">${r.isp_username ? escapeHTML(r.isp_username) : '<span class="muted">(chưa set)</span>'}</td>
         <td>${r.use_macvlan ? '✓' : '—'}</td>
         <td>${r.max_sessions}</td>
         <td>${r.session_count}</td>
         <td class="actions">
           <a href="/sessions.html?line=${r.id}">Sessions</a>
           &nbsp;|&nbsp;
+          <a href="#" onclick="event.preventDefault();editLine(${r.id})">Edit</a>
+          &nbsp;|&nbsp;
           <a href="#" onclick="event.preventDefault();deleteLine(${r.id},'${escapeHTML(r.name)}')">Xóa</a>
         </td>
       </tr>
-    `).join('') || '<tr><td colspan="7" class="muted">Chưa có line. Bấm "+ Tạo Line" để bắt đầu.</td></tr>';
+    `).join('') || '<tr><td colspan="8" class="muted">Chưa có line. Bấm "+ Tạo Line" để bắt đầu.</td></tr>';
   } catch (e) {
     Toast.error('Load lines: ' + e.message);
   }
@@ -88,10 +91,15 @@ async function submitCreateLine() {
   const data = {
     name: document.getElementById('nl-name').value.trim(),
     iface: document.getElementById('nl-iface').value.trim(),
+    isp_username: document.getElementById('nl-isp-user').value.trim(),
+    isp_password: document.getElementById('nl-isp-pass').value.trim(),
     use_macvlan: document.getElementById('nl-macvlan').value === 'true',
     max_sessions: parseInt(document.getElementById('nl-max').value) || 8,
   };
   if (!data.name || !data.iface) { Toast.error('Tên + iface bắt buộc'); return; }
+  if (!data.isp_username || !data.isp_password) {
+    if (!confirm('Chưa nhập ISP cred — line sẽ không dial được session tự động. Tạo line trống cred?')) return;
+  }
   try {
     await Api.createLine(data);
     Toast.success('Tạo line OK');
@@ -100,6 +108,21 @@ async function submitCreateLine() {
   } catch (e) {
     Toast.error('Tạo line: ' + e.message);
   }
+}
+
+async function editLine(id) {
+  const lines = await Api.listLines();
+  const l = lines.find(x => x.id === id);
+  if (!l) { Toast.error('Không tìm thấy line'); return; }
+  const newUser = prompt(`ISP username (đang: "${l.isp_username || ''}"):`, l.isp_username || '');
+  if (newUser === null) return;
+  const newPass = prompt(`ISP password (đang: "${l.isp_password || ''}"):`, l.isp_password || '');
+  if (newPass === null) return;
+  try {
+    await Api.updateLine(id, { isp_username: newUser, isp_password: newPass });
+    Toast.success('Updated');
+    loadLines();
+  } catch (e) { Toast.error(e.message); }
 }
 
 async function deleteLine(id, name) {
