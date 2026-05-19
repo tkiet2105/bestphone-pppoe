@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Lines — bestphone-pppoe</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <main>
+    <div class="card">
+      <div class="row" style="margin-bottom:12px">
+        <h2 style="margin:0;flex:1">PPPoE Lines</h2>
+        <button onclick="openCreateLine()">+ Tạo Line</button>
+      </div>
+      <table id="lines-table">
+        <thead><tr>
+          <th>ID</th><th>Tên</th><th>NIC iface</th><th>Macvlan?</th>
+          <th>Max</th><th>Sessions</th><th class="actions">Hành động</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+
+  <div class="modal-bg" id="create-line-modal">
+    <div class="modal">
+      <h3>Tạo Line PPPoE</h3>
+      <div class="form-row"><label>Tên</label><input id="nl-name" placeholder="FPT-Q1"></div>
+      <div class="form-row"><label>NIC iface (physical)</label><input id="nl-iface" placeholder="enp3s0"></div>
+      <div class="form-row"><label>Use macvlan?</label>
+        <select id="nl-macvlan"><option value="false">Không</option><option value="true">Có (mỗi session 1 MAC)</option></select>
+      </div>
+      <div class="form-row"><label>Max sessions</label><input type="number" id="nl-max" value="8"></div>
+      <div class="actions">
+        <button class="secondary" onclick="closeModal('create-line-modal')">Hủy</button>
+        <button onclick="submitCreateLine()">Tạo</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api-client.js"></script>
+  <script src="/js/lines.js"></script>
+</body>
+</html>

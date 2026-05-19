@@ -1,0 +1,46 @@
+#!/bin/bash
+# Smart update: chỉ pull + rebuild + restart khi VERSION upstream khác local.
+# Push code KHÔNG đổi VERSION = debug an toàn, fleet KHÔNG pull.
+set -e
+
+. /etc/default/bestphone-pppoe 2>/dev/null || true
+. /etc/default/bestphone-pppoe-pull-token 2>/dev/null || true
+
+REPO=/opt/bestphone-pppoe
+cd "$REPO"
+
+FETCH_OPT=""
+if [ -n "$GITHUB_PULL_TOKEN" ]; then
+  AUTH="Authorization: Basic $(printf 'tkiet2105:%s' "$GITHUB_PULL_TOKEN" | base64 -w0)"
+  FETCH_OPT="-c http.extraHeader=$AUTH"
+fi
+
+local_ver=$(cat VERSION 2>/dev/null | tr -d '[:space:]')
+[ -z "$local_ver" ] && local_ver="0.0.0"
+
+git $FETCH_OPT fetch origin main --quiet 2>/dev/null || { echo "[update] fetch failed"; exit 1; }
+
+remote_ver=$(git show origin/main:VERSION 2>/dev/null | tr -d '[:space:]')
+[ -z "$remote_ver" ] && remote_ver="0.0.0"
+
+if [ "$local_ver" = "$remote_ver" ]; then
+  echo "[update] version $local_ver (latest)"
+  exit 0
+fi
+
+echo "[update] $local_ver → $remote_ver"
+git $FETCH_OPT pull origin main
+
+export PATH=$PATH:/usr/local/go/bin
+CGO_ENABLED=0 go build -o /usr/local/bin/bestphone-pppoe ./cmd/bestphone-pppoe
+
+systemctl restart bestphone-pppoe
+sleep 2
+if systemctl is-active --quiet bestphone-pppoe; then
+  echo "[update] backend ✓ active"
+else
+  echo "[update] ⚠ backend inactive — check journalctl"
+fi
+
+/usr/local/bin/bestphone-pppoe-deploy-ui
+echo "[update] done"

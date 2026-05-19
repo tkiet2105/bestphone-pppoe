@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Export — bestphone-pppoe</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <main>
+    <div class="card">
+      <h2>Export proxy</h2>
+      <div class="row" style="margin-bottom:12px">
+        <select id="ex-type" style="max-width:200px">
+          <option value="public">Public IP (PPPoE)</option>
+          <option value="local">Local LAN IP</option>
+        </select>
+        <button onclick="refresh()">Refresh</button>
+        <button class="secondary" onclick="copyAll()">Copy</button>
+        <a class="btn secondary" id="raw-link" target="_blank">Raw text</a>
+      </div>
+      <pre class="export-text" id="ex-text">(đang load...)</pre>
+    </div>
+  </main>
+  <script src="/js/api-client.js"></script>
+  <script>
+    if (!ensureAuth()) {} else {
+      renderNav('export');
+      refresh();
+    }
+    async function refresh() {
+      const t = document.getElementById('ex-type').value;
+      document.getElementById('raw-link').href = `/api/v1/proxies/export?type=${t}&format=text&token=${encodeURIComponent(Api.getToken())}`;
+      try {
+        const text = await Api.exportProxies(t, 'text');
+        document.getElementById('ex-text').textContent = text;
+      } catch (e) { Toast.error(e.message); }
+    }
+    async function copyAll() {
+      const text = document.getElementById('ex-text').textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+        Toast.success('Đã copy ' + text.split('\n').filter(Boolean).length + ' dòng');
+      } catch (e) { Toast.error(e.message); }
+    }
+  </script>
+</body>
+</html>

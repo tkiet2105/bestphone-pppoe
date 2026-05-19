@@ -1,0 +1,8 @@
+[Unit]
+Description=bestphone-pppoe — auto-update (VERSION-based)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/bestphone-pppoe-update
+StandardOutput=journal
+StandardError=journal

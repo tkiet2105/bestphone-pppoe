@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Sessions — bestphone-pppoe</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <main>
+    <div class="card">
+      <div class="row" style="margin-bottom:12px">
+        <h2 style="margin:0;flex:1">Sessions <span id="filter-info" class="muted small"></span></h2>
+        <select id="filter-line" style="max-width:200px"><option value="">Tất cả lines</option></select>
+        <select id="filter-status" style="max-width:160px">
+          <option value="">Tất cả status</option>
+          <option value="connected">connected</option>
+          <option value="dialing">dialing</option>
+          <option value="error">error</option>
+          <option value="disconnected">disconnected</option>
+        </select>
+        <button onclick="loadSessions()">Refresh</button>
+        <button onclick="openCreateSession()">+ Session</button>
+        <button class="secondary" onclick="openBulkSession()">+ Bulk</button>
+        <button class="secondary" onclick="showExport()">Export</button>
+      </div>
+      <table id="sessions-table">
+        <thead><tr>
+          <th>ID</th><th>Line</th><th>ppp</th><th>iface</th><th>User</th>
+          <th>Status</th><th>Public IP</th><th>Port</th><th>Creds</th>
+          <th class="actions">Hành động</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+
+  <!-- Create session modal -->
+  <div class="modal-bg" id="create-sess-modal">
+    <div class="modal">
+      <h3>Tạo Session mới</h3>
+      <div class="form-row"><label>Line</label>
+        <select id="ns-line"></select>
+      </div>
+      <div class="form-row"><label>Username (PPPoE)</label><input id="ns-user"></div>
+      <div class="form-row"><label>Password (PPPoE)</label><input id="ns-pass"></div>
+      <div class="form-row"><label>MAC spoof (optional, dùng khi line use_macvlan)</label><input id="ns-mac" placeholder="aa:bb:cc:dd:ee:ff"></div>
+      <div class="actions">
+        <button class="secondary" onclick="closeModal('create-sess-modal')">Hủy</button>
+        <button onclick="submitCreateSession()">Tạo + Dial</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bulk session modal -->
+  <div class="modal-bg" id="bulk-sess-modal">
+    <div class="modal">
+      <h3>Bulk Sessions</h3>
+      <div class="form-row"><label>Line</label><select id="bs-line"></select></div>
+      <div class="form-row">
+        <label>Creds (mỗi dòng: user pass [mac])</label>
+        <textarea id="bs-creds" rows="6" placeholder="user1 pass1
+user2 pass2 aa:bb:cc:dd:ee:01
+..."></textarea>
+      </div>
+      <div class="actions">
+        <button class="secondary" onclick="closeModal('bulk-sess-modal')">Hủy</button>
+        <button onclick="submitBulk()">Tạo song song</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Creds modal -->
+  <div class="modal-bg" id="creds-modal">
+    <div class="modal">
+      <h3>Credentials cho session <span id="cm-sid"></span> (proxy <span id="cm-pid"></span>)</h3>
+      <table class="creds-table" id="creds-table">
+        <thead><tr><th>ID</th><th>Label</th><th>User</th><th>Pass</th><th>Enabled</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="row" style="margin-top:12px">
+        <input id="cm-label" placeholder="label">
+        <input id="cm-user" placeholder="user">
+        <input id="cm-pass" placeholder="pass">
+        <button onclick="submitCred()">Thêm</button>
+        <button class="secondary" onclick="bulkCredsPrompt()">Bulk N</button>
+      </div>
+      <div class="actions">
+        <button class="secondary" onclick="closeModal('creds-modal')">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export modal -->
+  <div class="modal-bg" id="export-modal">
+    <div class="modal" style="min-width:640px">
+      <h3>Export Proxies</h3>
+      <div class="row" style="margin-bottom:12px">
+        <select id="ex-type"><option value="public">Public IP</option><option value="local">Local IP</option></select>
+        <button onclick="refreshExport()">Refresh</button>
+        <button class="secondary" onclick="copyExport()">Copy</button>
+      </div>
+      <pre class="export-text" id="ex-text">(đang load...)</pre>
+      <div class="actions">
+        <button class="secondary" onclick="closeModal('export-modal')">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api-client.js"></script>
+  <script src="/js/sessions.js"></script>
+</body>
+</html>

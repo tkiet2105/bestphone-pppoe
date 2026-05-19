@@ -1,0 +1,19 @@
+#!/bin/bash
+# Deploy UI: rsync /opt/bestphone-pppoe/ui/ → /var/www/bestphone-pppoe/
+# Cache-bust ?v=$(date +%s) trên link script/css.
+set -e
+SRC=/opt/bestphone-pppoe/ui
+DST=/var/www/bestphone-pppoe
+[ -d "$SRC" ] || { echo "[deploy-ui] $SRC not found"; exit 1; }
+mkdir -p "$DST"
+
+# Mirror với delete để file cũ tự đào thải
+rsync -a --delete --exclude '.git' "$SRC/" "$DST/"
+
+# Cache-bust trên html: thay /js/foo.js → /js/foo.js?v=<ts>, /css/x.css → /css/x.css?v=<ts>
+TS=$(date +%s)
+find "$DST" -maxdepth 1 -name "*.html" -print0 | while IFS= read -r -d '' f; do
+  sed -i -E "s|(/(js|css)/[^\"' ]+\\.(js|css))(\\?v=[0-9]+)?|\\1?v=$TS|g" "$f"
+done
+
+echo "[deploy-ui] synced $SRC → $DST (v=$TS)"
