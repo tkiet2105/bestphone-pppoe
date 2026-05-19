@@ -13,6 +13,11 @@ import (
 	proxysrv "github.com/tkiet2105/bestphone-pppoe/internal/proxy/server"
 )
 
+// allocMu — serialize allocation cua ppp_unit + proxy port trong bulk create.
+// SQLite WAL với maxOpenConns=1 đã serialize TX, nhưng (SELECT free → INSERT)
+// là 2 step rời → race nếu N goroutines song song. Mutex này thắt eo lại.
+var allocMu sync.Mutex
+
 type createSessionReq struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
@@ -88,8 +93,11 @@ func CreateLineSessionsBulk(c *gin.Context) {
 }
 
 func createSessionAndDial(line models.Line, req createSessionReq) (*models.Session, *models.Proxy, error) {
+	// === Alloc phase (serialized) — đảm bảo ppp_unit + port không trùng khi N goroutines song song ===
+	allocMu.Lock()
 	pppUnit, err := pppoe.AllocPppUnit(db.DB)
 	if err != nil {
+		allocMu.Unlock()
 		return nil, nil, err
 	}
 	sess := models.Session{
@@ -101,19 +109,25 @@ func createSessionAndDial(line models.Line, req createSessionReq) (*models.Sessi
 		Status:   models.StatusDisconnected,
 	}
 	if err := db.DB.Create(&sess).Error; err != nil {
+		allocMu.Unlock()
 		return nil, nil, err
 	}
 	port, err := proxysrv.M.AllocPort()
 	if err != nil {
 		db.DB.Delete(&sess)
+		allocMu.Unlock()
 		return nil, nil, err
 	}
 	p := models.Proxy{SessionId: sess.Id, Port: port, Status: "stopped"}
 	if err := db.DB.Create(&p).Error; err != nil {
 		db.DB.Delete(&sess)
+		allocMu.Unlock()
 		return nil, nil, err
 	}
-	// Seed 1 legacy cred từ username/password chính (multi-cred ngay từ đầu)
+	allocMu.Unlock()
+	// === End alloc ===
+
+	// Seed cred mặc định (mode multi-cred từ đầu — user có thể thêm/xóa sau)
 	cred := models.ProxyCredential{
 		ProxyId:  p.Id,
 		Label:    "default",
