@@ -6,6 +6,10 @@ if (!ensureAuth()) {} else {
 let _autoTimer = null;
 
 function init() {
+  // URL param ?filter=keyword → auto-fill filter input
+  const urlFilter = new URLSearchParams(location.search).get('filter');
+  if (urlFilter) document.getElementById('lg-filter').value = urlFilter;
+
   ['lg-source','lg-since','lg-lines','lg-filter'].forEach(id => {
     document.getElementById(id).addEventListener('change', () => refresh());
   });

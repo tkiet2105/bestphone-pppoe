@@ -110,27 +110,34 @@ function lineName(id) {
 function renderSessions() {
   const tbody = document.querySelector('#sessions-table tbody');
   if (!_sessions.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="muted">Chưa có session.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="muted">Chưa có session.</td></tr>';
     return;
   }
-  tbody.innerHTML = _sessions.map(s => `
+  tbody.innerHTML = _sessions.map(s => {
+    const errCell = s.last_error
+      ? `<span class="mono small" style="color:#fbbf24" title="${escapeHTML(s.last_error)}">${escapeHTML(s.last_error.length > 50 ? s.last_error.slice(0,50) + '…' : s.last_error)}</span>
+         <a href="/logs.html?filter=${encodeURIComponent(s.username)}" target="_blank" class="small" title="Xem log pppd cho session này">log↗</a>`
+      : '<span class="muted small">—</span>';
+    return `
     <tr>
       <td>${s.id}</td>
       <td>${escapeHTML(lineName(s.line_id))}</td>
       <td class="mono">ppp${s.ppp_unit}</td>
       <td class="mono">${escapeHTML(s.iface || '—')}</td>
       <td class="mono small">${escapeHTML(s.username)}</td>
-      <td>${statusBadge(s.status)} ${s.last_error ? `<span class="muted small" title="${escapeHTML(s.last_error)}">⚠</span>` : ''}</td>
+      <td>${statusBadge(s.status)}</td>
       <td class="mono">${escapeHTML(s.public_ip || s.ip || '—')}</td>
       <td class="mono">${s.proxy_port || '—'}</td>
       <td>${s.creds_count} <a href="#" onclick="event.preventDefault();openCreds(${s.id},${s.proxy_id})">edit</a></td>
+      <td>${errCell}</td>
       <td class="actions">
         <button class="small" onclick="rotateSession(${s.id})">Rotate</button>
         <button class="small secondary" onclick="toggleEnabled(${s.id},'${s.proxy_status}')">${s.proxy_status === 'running' ? 'Tắt' : 'Bật'}</button>
         <button class="small danger" onclick="deleteSession(${s.id})">Xóa</button>
       </td>
     </tr>
-  `).join('');
+    `;
+  }).join('');
 }
 
 function openCreateSession() {
