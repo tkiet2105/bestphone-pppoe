@@ -26,7 +26,10 @@
     <div class="modal">
       <h3>Tạo Line PPPoE</h3>
       <div class="form-row"><label>Tên</label><input id="nl-name" placeholder="FPT-Q1"></div>
-      <div class="form-row"><label>NIC iface (physical)</label><input id="nl-iface" placeholder="enp3s0"></div>
+      <div class="form-row"><label>NIC iface (physical)</label>
+        <select id="nl-iface"><option value="">(đang load...)</option></select>
+        <div class="muted small" id="nl-iface-hint" style="margin-top:4px"></div>
+      </div>
       <div class="form-row"><label>Use macvlan?</label>
         <select id="nl-macvlan"><option value="false">Không</option><option value="true">Có (mỗi session 1 MAC)</option></select>
       </div>

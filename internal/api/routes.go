@@ -14,6 +14,7 @@ func RegisterRoutes(r *gin.Engine) {
 	g := r.Group("/api/v1", BearerAuth())
 	{
 		g.GET("/events", EventsSSE)
+		g.GET("/ifaces", ListIfaces)
 
 		g.POST("/lines", CreateLine)
 		g.GET("/lines", ListLines)

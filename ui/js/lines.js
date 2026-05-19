@@ -27,8 +27,22 @@ async function loadLines() {
   }
 }
 
-function openCreateLine() {
+async function openCreateLine() {
   document.getElementById('create-line-modal').classList.add('open');
+  // Load iface dropdown mỗi lần mở modal
+  try {
+    const ifaces = await Api.listIfaces();
+    const sel = document.getElementById('nl-iface');
+    sel.innerHTML = ifaces.map(i => {
+      const ips = i.ips && i.ips.length ? i.ips.join(', ') : '—';
+      const stateBadge = i.state === 'up' ? '🟢' : '⚪';
+      return `<option value="${escapeHTML(i.name)}">${stateBadge} ${escapeHTML(i.name)} (${escapeHTML(ips)})</option>`;
+    }).join('');
+    document.getElementById('nl-iface-hint').textContent =
+      'Chọn NIC physical đang cắm PPPoE upstream (line ISP). Iface có IP = đang gắn LAN/WAN khác — vẫn dial được nếu rp-pppoe layer 2.';
+  } catch (e) {
+    Toast.error('Load ifaces: ' + e.message);
+  }
 }
 
 function closeModal(id) {

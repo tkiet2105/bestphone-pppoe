@@ -42,6 +42,9 @@ const Api = (() => {
     // health
     health: () => fetch(BASE + '/health').then(r => r.json()),
 
+    // ifaces
+    listIfaces: () => _req('GET', '/ifaces'),
+
     // lines
     listLines: () => _req('GET', '/lines'),
     createLine: (data) => _req('POST', '/lines', data),
