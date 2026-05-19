@@ -171,3 +171,76 @@ function escapeHTML(s) {
 function statusBadge(s) {
   return `<span class="badge ${escapeHTML(s)}">${escapeHTML(s)}</span>`;
 }
+
+// ─── Button UX: ripple + async disable ───
+// 1. Global click listener: spawn ripple span tại vị trí click trên mọi <button>.
+// 2. Intercept onclick handler: nếu trả Promise → add .is-loading + disable cho đến khi resolve.
+(function setupButtonUX() {
+  if (window.__btnUXReady) return;
+  window.__btnUXReady = true;
+
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('button, .btn');
+    if (!btn) return;
+    if (btn.disabled || btn.classList.contains('is-loading')) {
+      e.preventDefault(); e.stopImmediatePropagation(); return;
+    }
+    // Ripple
+    const rect = btn.getBoundingClientRect();
+    const r = document.createElement('span');
+    r.className = 'btn-ripple';
+    r.style.left = (e.clientX - rect.left) + 'px';
+    r.style.top = (e.clientY - rect.top) + 'px';
+    btn.appendChild(r);
+    setTimeout(() => r.remove(), 600);
+  }, true);
+
+  // Intercept inline onclick — wrap để detect Promise return.
+  // Approach: override Element.prototype.onclick setter để wrap handler.
+  // Áp dụng cho mọi button có onclick attribute.
+  const origSetAttr = Element.prototype.setAttribute;
+  // Quá invasive — simpler: scan buttons sau page load + wrap.
+  function wrapOnclick(btn) {
+    if (btn.__uxWrapped) return;
+    const original = btn.onclick;
+    if (!original) return;
+    btn.__uxWrapped = true;
+    btn.onclick = function(ev) {
+      const ret = original.call(this, ev);
+      if (ret && typeof ret.then === 'function') {
+        const saved = this.textContent;
+        this.classList.add('is-loading');
+        ret.finally(() => {
+          this.classList.remove('is-loading');
+          this.textContent = saved;
+        });
+      }
+      return ret;
+    };
+  }
+
+  // Re-scan khi DOM thay đổi.
+  function scanAll() {
+    document.querySelectorAll('button[onclick], .btn[onclick]').forEach(wrapOnclick);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', scanAll);
+  } else {
+    scanAll();
+  }
+  // Watch DOM thêm button mới (modal open hoặc render bảng).
+  const obs = new MutationObserver(scanAll);
+  obs.observe(document.body || document.documentElement, { childList: true, subtree: true });
+})();
+
+// withButton — explicit helper cho async action có btn reference rõ ràng.
+// Dùng khi onclick handler được attach qua addEventListener (không qua attribute).
+async function withButton(btn, asyncFn) {
+  if (!btn || btn.disabled || btn.classList.contains('is-loading')) return;
+  btn.classList.add('is-loading');
+  try {
+    return await asyncFn();
+  } finally {
+    btn.classList.remove('is-loading');
+  }
+}
