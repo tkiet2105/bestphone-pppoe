@@ -135,21 +135,74 @@ function renderSessions() {
 
 function openCreateSession() {
   document.getElementById('create-sess-modal').classList.add('open');
+  // Reset state
+  document.getElementById('ns-random').checked = false;
+  toggleRandomSingle();
+}
+
+function randHex(n) {
+  const a = new Uint8Array(n);
+  crypto.getRandomValues(a);
+  return Array.from(a).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function randomCred() {
+  return { username: 'u_' + randHex(4), password: randHex(6) };
+}
+
+function randomMac() {
+  const a = new Uint8Array(5);
+  crypto.getRandomValues(a);
+  return '02:' + Array.from(a).map(b => b.toString(16).padStart(2, '0')).join(':');
+}
+
+function toggleRandomSingle() {
+  const random = document.getElementById('ns-random').checked;
+  const u = document.getElementById('ns-user');
+  const p = document.getElementById('ns-pass');
+  if (random) {
+    const c = randomCred();
+    u.value = c.username; u.disabled = true;
+    p.value = c.password; p.disabled = true;
+  } else {
+    u.disabled = false; p.disabled = false;
+  }
+}
+
+function rollRandomSingle() {
+  const c = randomCred();
+  document.getElementById('ns-user').value = c.username;
+  document.getElementById('ns-pass').value = c.password;
+  // Uncheck random nếu đang on (vì user override)
+  document.getElementById('ns-random').checked = false;
+  document.getElementById('ns-user').disabled = false;
+  document.getElementById('ns-pass').disabled = false;
+}
+
+function rollRandomMac() {
+  document.getElementById('ns-mac').value = randomMac();
 }
 
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
 async function submitCreateSession() {
-  const data = {
-    username: document.getElementById('ns-user').value.trim(),
-    password: document.getElementById('ns-pass').value.trim(),
-    mac: document.getElementById('ns-mac').value.trim(),
-  };
+  const random = document.getElementById('ns-random').checked;
+  let data;
+  if (random) {
+    const c = randomCred();
+    data = { username: c.username, password: c.password, mac: document.getElementById('ns-mac').value.trim() || randomMac() };
+  } else {
+    data = {
+      username: document.getElementById('ns-user').value.trim(),
+      password: document.getElementById('ns-pass').value.trim(),
+      mac: document.getElementById('ns-mac').value.trim(),
+    };
+  }
   const lineId = parseInt(document.getElementById('ns-line').value);
   if (!data.username || !data.password) { Toast.error('user/pass bắt buộc'); return; }
   try {
     const r = await Api.createSession(lineId, data);
-    Toast.success(`Session ${r.session.id} ${r.session.status}`);
+    Toast.success(`Session ${r.session.id} ${r.session.status} (cred: ${data.username})`);
     closeModal('create-sess-modal');
     loadSessions();
   } catch (e) { Toast.error('Tạo session: ' + e.message); }
@@ -157,20 +210,41 @@ async function submitCreateSession() {
 
 function openBulkSession() {
   document.getElementById('bulk-sess-modal').classList.add('open');
+  document.getElementById('bs-random').checked = false;
+  toggleRandomBulk();
+}
+
+function toggleRandomBulk() {
+  const random = document.getElementById('bs-random').checked;
+  document.getElementById('bs-count-row').style.display = random ? '' : 'none';
+  document.getElementById('bs-creds-row').style.display = random ? 'none' : '';
 }
 
 async function submitBulk() {
   const lineId = parseInt(document.getElementById('bs-line').value);
-  const raw = document.getElementById('bs-creds').value.trim();
-  const creds = raw.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
-    const parts = line.split(/\s+/);
-    return { username: parts[0], password: parts[1], mac: parts[2] || '' };
-  });
-  if (!creds.length) { Toast.error('Nhập creds'); return; }
+  const random = document.getElementById('bs-random').checked;
+  let creds;
+  if (random) {
+    const n = parseInt(document.getElementById('bs-count').value) || 0;
+    if (n <= 0 || n > 100) { Toast.error('N 1..100'); return; }
+    creds = Array.from({ length: n }, () => {
+      const c = randomCred();
+      return { username: c.username, password: c.password, mac: randomMac() };
+    });
+  } else {
+    const raw = document.getElementById('bs-creds').value.trim();
+    creds = raw.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
+      const parts = line.split(/\s+/);
+      return { username: parts[0], password: parts[1], mac: parts[2] || '' };
+    });
+  }
+  if (!creds.length) { Toast.error('Cần ít nhất 1 cred'); return; }
   try {
+    Toast.info(`Bulk ${creds.length} sessions — chạy nền...`);
     const r = await Api.bulkCreateSessions(lineId, { count: creds.length, creds });
     const ok = r.filter(x => x.status === 'connected').length;
-    Toast.success(`Bulk: ${ok}/${r.length} OK`);
+    const err = r.filter(x => x.status === 'error').length;
+    Toast.success(`Bulk: ${ok} connected · ${err} error / ${r.length}`);
     closeModal('bulk-sess-modal');
     loadSessions();
   } catch (e) { Toast.error('Bulk: ' + e.message); }

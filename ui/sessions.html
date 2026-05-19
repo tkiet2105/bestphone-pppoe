@@ -55,9 +55,25 @@
       <div class="form-row"><label>Line</label>
         <select id="ns-line"></select>
       </div>
-      <div class="form-row"><label>Username (PPPoE)</label><input id="ns-user"></div>
+      <div class="form-row">
+        <label>
+          <input type="checkbox" id="ns-random" onchange="toggleRandomSingle()" style="width:auto;margin-right:6px">
+          Sinh random user/pass tự động (test/demo)
+        </label>
+      </div>
+      <div class="form-row"><label>Username (PPPoE)</label>
+        <div class="row" style="gap:6px">
+          <input id="ns-user">
+          <button class="secondary" type="button" onclick="rollRandomSingle()" title="Random cred">🎲</button>
+        </div>
+      </div>
       <div class="form-row"><label>Password (PPPoE)</label><input id="ns-pass"></div>
-      <div class="form-row"><label>MAC spoof (optional, dùng khi line use_macvlan)</label><input id="ns-mac" placeholder="aa:bb:cc:dd:ee:ff"></div>
+      <div class="form-row"><label>MAC spoof (optional, dùng khi line use_macvlan)</label>
+        <div class="row" style="gap:6px">
+          <input id="ns-mac" placeholder="aa:bb:cc:dd:ee:ff (để trống = random)">
+          <button class="secondary" type="button" onclick="rollRandomMac()" title="Random MAC">🎲</button>
+        </div>
+      </div>
       <div class="actions">
         <button class="secondary" onclick="closeModal('create-sess-modal')">Hủy</button>
         <button onclick="submitCreateSession()">Tạo + Dial</button>
@@ -71,6 +87,16 @@
       <h3>Bulk Sessions</h3>
       <div class="form-row"><label>Line</label><select id="bs-line"></select></div>
       <div class="form-row">
+        <label>
+          <input type="checkbox" id="bs-random" onchange="toggleRandomBulk()" style="width:auto;margin-right:6px">
+          Sinh random N user/pass tự động (test/demo)
+        </label>
+      </div>
+      <div class="form-row" id="bs-count-row" style="display:none">
+        <label>Số session (N)</label>
+        <input type="number" id="bs-count" value="32" min="1" max="100">
+      </div>
+      <div class="form-row" id="bs-creds-row">
         <label>Creds (mỗi dòng: user pass [mac])</label>
         <textarea id="bs-creds" rows="6" placeholder="user1 pass1
 user2 pass2 aa:bb:cc:dd:ee:01
