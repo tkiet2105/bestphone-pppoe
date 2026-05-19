@@ -44,6 +44,7 @@ const Api = (() => {
 
     // ifaces
     listIfaces: () => _req('GET', '/ifaces'),
+    probeIfaces: (ifaces) => _req('POST', '/ifaces/probe', ifaces ? { ifaces } : {}),
 
     // lines
     listLines: () => _req('GET', '/lines'),

@@ -3,6 +3,63 @@ if (!ensureAuth()) {} else {
   init();
 }
 
+// --- NIC panel ---
+let _nicsPADO = {}; // iface → {ac_name, ac_source_mac}
+
+async function loadNics() {
+  try {
+    const list = await Api.listIfaces();
+    renderNics(list);
+  } catch (e) { Toast.error('Load NICs: ' + e.message); }
+}
+
+function renderNics(list) {
+  if (!list.length) {
+    document.getElementById('nic-list').textContent = '(không có NIC physical)';
+    return;
+  }
+  const html = list.map(n => {
+    const tags = [];
+    if (n.state === 'up') tags.push('<span class="tag up">UP</span>');
+    if (n.carrier) tags.push(`<span class="tag carrier">LINK ${n.speed_mbps > 0 ? n.speed_mbps + 'M' : ''}</span>`);
+    else tags.push('<span class="tag no-link">NO-CARRIER</span>');
+    if (n.used_by_line) tags.push(`<span class="tag line">Line #${n.used_by_line} (${escapeHTML(n.used_by_name)})</span>`);
+    const pado = _nicsPADO[n.name];
+    if (pado && pado.pado) {
+      tags.push(`<span class="tag pado">PADO ${escapeHTML(pado.ac_name)}</span>`);
+    }
+    const ips = n.ips && n.ips.length ? n.ips.join(', ') : '—';
+    const klass = ['nic-tile'];
+    if (!n.carrier) klass.push('no-carrier');
+    if (pado && pado.pado) klass.push('has-pado');
+    return `
+      <div class="${klass.join(' ')}">
+        <div class="nic-name">${escapeHTML(n.name)}</div>
+        <div class="nic-meta">${escapeHTML(n.mac)}</div>
+        <div class="nic-meta">${escapeHTML(ips)}</div>
+        <div class="nic-tags">${tags.join('')}</div>
+      </div>`;
+  }).join('');
+  document.getElementById('nic-list').innerHTML = '<div class="nic-grid">' + html + '</div>';
+}
+
+async function probeNics() {
+  const btn = document.getElementById('probe-btn');
+  btn.disabled = true; btn.textContent = 'Probing...';
+  try {
+    const results = await Api.probeIfaces();
+    _nicsPADO = {};
+    results.forEach(r => _nicsPADO[r.name] = r);
+    const padoCount = results.filter(r => r.pado).length;
+    Toast.success(`Probe xong: ${padoCount}/${results.length} NIC có PADO`);
+    loadNics(); // re-render để hiển thị tag PADO
+  } catch (e) {
+    Toast.error('Probe: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'PADO probe';
+  }
+}
+
 let _lines = [];
 let _sessions = [];
 
@@ -10,7 +67,7 @@ const params = new URLSearchParams(location.search);
 const initialLine = params.get('line') || '';
 
 async function init() {
-  await loadLines();
+  await Promise.all([loadLines(), loadNics()]);
   if (initialLine) document.getElementById('filter-line').value = initialLine;
   await loadSessions();
   // SSE live update

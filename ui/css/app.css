@@ -123,3 +123,26 @@ pre.export-text {
 
 .creds-table { margin-top: 12px; font-size: 12px; }
 .creds-table td { padding: 4px 8px; }
+
+.nic-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+.nic-tile {
+  background: #0f172a; border: 1px solid #334155; border-radius: 8px;
+  padding: 10px 12px; position: relative;
+}
+.nic-tile.has-pado { border-color: #16a34a; }
+.nic-tile.no-carrier { opacity: 0.55; }
+.nic-tile .nic-name { font-weight: 600; font-family: 'SF Mono', Monaco, monospace; font-size: 13px; color: #f1f5f9; }
+.nic-tile .nic-meta { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+.nic-tile .nic-tags { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+.nic-tile .tag {
+  font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 600;
+}
+.nic-tile .tag.up { background: #16a34a; color: #fff; }
+.nic-tile .tag.carrier { background: #2563eb; color: #fff; }
+.nic-tile .tag.no-link { background: #475569; color: #cbd5e1; }
+.nic-tile .tag.pado { background: #f59e0b; color: #000; }
+.nic-tile .tag.line { background: #7c3aed; color: #fff; }

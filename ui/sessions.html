@@ -7,6 +7,20 @@
 </head>
 <body>
   <main>
+    <!-- NIC status panel -->
+    <div class="card" id="nic-panel">
+      <div class="row" style="margin-bottom:8px">
+        <h2 style="margin:0;flex:1">Mạng — Physical NIC</h2>
+        <button class="secondary" onclick="loadNics()">Refresh</button>
+        <button onclick="probeNics()" id="probe-btn">PADO probe</button>
+      </div>
+      <div id="nic-list" class="muted">(đang load...)</div>
+      <div class="muted small" style="margin-top:8px">
+        PADO probe gửi PADI broadcast trên các NIC có carrier để biết cổng nào có ISP PPPoE (BRAS).
+        Không gửi auth — không có rủi ro AuthNak. Mỗi NIC ~7s, sequential.
+      </div>
+    </div>
+
     <div class="card">
       <div class="row" style="margin-bottom:12px">
         <h2 style="margin:0;flex:1">Sessions <span id="filter-info" class="muted small"></span></h2>

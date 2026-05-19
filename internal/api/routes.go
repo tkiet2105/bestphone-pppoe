@@ -15,6 +15,7 @@ func RegisterRoutes(r *gin.Engine) {
 	{
 		g.GET("/events", EventsSSE)
 		g.GET("/ifaces", ListIfaces)
+		g.POST("/ifaces/probe", ProbeIfaces)
 
 		g.POST("/lines", CreateLine)
 		g.GET("/lines", ListLines)
