@@ -152,6 +152,11 @@ func createSessionAndDial(line models.Line, req createSessionReq) (*models.Sessi
 	if username == "" || password == "" {
 		return nil, nil, fmt.Errorf("cần cred PPPoE: nhập trong line.isp_username/password hoặc override per-session")
 	}
+	// Auto-generate MAC nếu line.use_macvlan và request không có MAC.
+	mac := req.MAC
+	if line.UseMacvlan && mac == "" {
+		mac = randMacGo()
+	}
 
 	// === Alloc phase (serialized) — đảm bảo ppp_unit + port không trùng khi N goroutines song song ===
 	allocMu.Lock()
@@ -165,7 +170,7 @@ func createSessionAndDial(line models.Line, req createSessionReq) (*models.Sessi
 		PppUnit:  pppUnit,
 		Username: username,
 		Password: password,
-		MAC:      req.MAC,
+		MAC:      mac,
 		Status:   models.StatusDisconnected,
 	}
 	if err := db.DB.Create(&sess).Error; err != nil {
