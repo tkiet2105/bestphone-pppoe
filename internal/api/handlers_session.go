@@ -352,6 +352,72 @@ func SetSessionEnabled(c *gin.Context) {
 	ok(c, gin.H{"session_id": id, "enabled": req.Enabled})
 }
 
+// SetSessionAutoRotate — cấu hình tự đổi IP chu kỳ cho phiên.
+// body: { "seconds": N }  N=0 tắt, N>=60 = chu kỳ (giây). Tối thiểu 60s để tránh
+// DDoS BRAS / rotate storm.
+type setAutoRotateReq struct {
+	Seconds int `json:"seconds"`
+}
+
+func SetSessionAutoRotate(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	var req setAutoRotateReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, 400, err.Error())
+		return
+	}
+	if req.Seconds < 0 {
+		fail(c, 400, "seconds phải >= 0")
+		return
+	}
+	if req.Seconds > 0 && req.Seconds < 60 {
+		fail(c, 400, "chu kỳ tối thiểu 60 giây (tránh rotate storm)")
+		return
+	}
+	var s models.Session
+	if err := db.DB.First(&s, id).Error; err != nil {
+		fail(c, 404, "session không tồn tại")
+		return
+	}
+	if err := db.DB.Model(&s).Update("auto_rotate_seconds", req.Seconds).Error; err != nil {
+		fail(c, 500, err.Error())
+		return
+	}
+	ok(c, gin.H{"session_id": id, "auto_rotate_seconds": req.Seconds})
+}
+
+// SetSessionAutoRotateBatch — bulk set cho nhiều phiên cùng lúc.
+type setAutoRotateBatchReq struct {
+	SessionIds []uint `json:"session_ids" binding:"required"`
+	Seconds    int    `json:"seconds"`
+}
+
+func SetSessionAutoRotateBatch(c *gin.Context) {
+	var req setAutoRotateBatchReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, 400, err.Error())
+		return
+	}
+	if req.Seconds < 0 {
+		fail(c, 400, "seconds phải >= 0")
+		return
+	}
+	if req.Seconds > 0 && req.Seconds < 60 {
+		fail(c, 400, "chu kỳ tối thiểu 60 giây")
+		return
+	}
+	if len(req.SessionIds) == 0 {
+		fail(c, 400, "thiếu session_ids")
+		return
+	}
+	res := db.DB.Model(&models.Session{}).Where("id IN ?", req.SessionIds).Update("auto_rotate_seconds", req.Seconds)
+	if res.Error != nil {
+		fail(c, 500, res.Error.Error())
+		return
+	}
+	ok(c, gin.H{"updated": res.RowsAffected, "seconds": req.Seconds})
+}
+
 type rotateBatchReq struct {
 	SessionIds  []uint `json:"session_ids" binding:"required"`
 	Concurrency int    `json:"concurrency"`

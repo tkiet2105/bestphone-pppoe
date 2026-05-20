@@ -206,6 +206,58 @@ func (m *Manager) StartWatchdog(ctx context.Context) {
 	}()
 }
 
+// StartAutoRotate — 30s tick: tìm các session có AutoRotateSeconds>0 đã đến hạn,
+// rotate song song với concurrency 3 để tránh BRAS storm. Mốc tính chu kỳ là
+// LastRotateAt (fallback CreatedAt nếu chưa rotate lần nào).
+func (m *Manager) StartAutoRotate(ctx context.Context) {
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				m.autoRotateOnce()
+			}
+		}
+	}()
+}
+
+func (m *Manager) autoRotateOnce() {
+	now := time.Now()
+	var sessions []models.Session
+	m.db.Where("auto_rotate_seconds > 0 AND status = ?", models.StatusConnected).Find(&sessions)
+	if len(sessions) == 0 {
+		return
+	}
+	sem := make(chan struct{}, 3) // tối đa 3 rotate đồng thời
+	var wg sync.WaitGroup
+	for _, s := range sessions {
+		baseline := s.CreatedAt
+		if s.LastRotateAt != nil {
+			baseline = *s.LastRotateAt
+		}
+		dueAt := baseline.Add(time.Duration(s.AutoRotateSeconds) * time.Second)
+		if dueAt.After(now) {
+			continue
+		}
+		sid := s.Id
+		interval := s.AutoRotateSeconds
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			log.Printf("[auto-rotate] session %d due (interval=%ds, last=%v)", sid, interval, baseline.Format(time.RFC3339))
+			if _, _, err := m.Rotate(sid); err != nil {
+				log.Printf("[auto-rotate] session %d failed: %v", sid, err)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func (m *Manager) reconcileOnce() {
 	var sessions []models.Session
 	m.db.Where("status = ?", models.StatusConnected).Find(&sessions)

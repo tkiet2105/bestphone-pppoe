@@ -290,6 +290,20 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #2563eb
 .badge.error .badge-icon { color: #f87171; }
 .badge.disconnected, .badge.stopped { background: #1f2937; color: #94a3b8; }
 
+/* ─── Auto-rotate preset chips ─── */
+.ar-preset {
+  background: #334155; color: #e2e8f0;
+  border: 1px solid #475569;
+  padding: 6px 14px; border-radius: 16px;
+  font-size: 12.5px; cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.ar-preset:hover { background: #475569; }
+.ar-preset.active {
+  background: #2563eb; border-color: #2563eb; color: #fff;
+  font-weight: 600;
+}
+
 .login-box {
   max-width: 380px; margin: 80px auto;
   background: #1e293b; padding: 32px; border-radius: 8px;

@@ -107,7 +107,7 @@ function lineName(id) {
 function renderSessions() {
   const tbody = document.querySelector('#sessions-table tbody');
   if (!_sessions.length) {
-    tbody.innerHTML = '<tr><td colspan="12" class="muted">Chưa có session nào. Bấm "+ Tạo session" để tạo.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="muted">Chưa có session nào. Bấm "⊕ Tạo session" để tạo.</td></tr>';
     _updateSelUI();
     return;
   }
@@ -132,6 +132,7 @@ function renderSessions() {
       <td class="mono">${escapeHTML(s.public_ip || s.ip || '—')}</td>
       <td class="mono">${s.proxy_port || '—'}</td>
       <td>${s.creds_count} <a href="#" onclick="event.preventDefault();openCreds(${s.id},${s.proxy_id})">sửa</a></td>
+      <td><a href="#" onclick="event.preventDefault();openAutoRotateDialog(${s.id})" title="Click để cấu hình chu kỳ tự đổi IP">${autoRotateBadge(s.auto_rotate_seconds || 0, s.last_rotate_at)}</a></td>
       <td>${errCell}</td>
       <td class="actions">
         <label class="switch" title="${s.proxy_status === 'running' ? 'Đang chạy — click để tắt' : 'Đã dừng — click để bật'}">
@@ -317,6 +318,9 @@ function _showCtxMenu(x, y) {
     <div class="ctx-item" data-act="rotate">
       <span class="ctx-icon">↻</span><span style="flex:1">Đổi IP (chạy song song)</span>
     </div>
+    <div class="ctx-item" data-act="auto-rotate">
+      <span class="ctx-icon">⟳</span><span style="flex:1">Cấu hình <b>tự đổi IP</b> cho ${n} session đã chọn…</span>
+    </div>
     <div class="ctx-sep"></div>
     <div class="ctx-item" data-act="copy-default-pub">
       <span class="ctx-icon">⎘</span><span style="flex:1">Copy proxy <b>mặc định</b> (Public IP)</span>
@@ -388,6 +392,7 @@ async function bulkAction(act) {
     case 'copy-default-local': return copyCredsByType('local',  ids, true);
     case 'rule-add':           return bulkAddRule(ids);
     case 'rule-clear':         return bulkClearRules(ids);
+    case 'auto-rotate':        return bulkAutoRotate(ids);
     case 'delete': {
       const okDel = await Dialog.confirm(
         `Xóa <b>${ids.length}</b> phiên đã chọn?\n\nHành động không thể hoàn tác.`,
@@ -645,8 +650,157 @@ async function bulkClearRules(sessionIds) {
   else Toast.error(`Đã xóa ${okN}/${results.length} — ${results.length - okN} thất bại`);
 }
 
+// Bulk auto-rotate ────────────────────────────────────────────────────────
+async function bulkAutoRotate(sessionIds) {
+  // Lấy giá trị phổ biến nhất trong các session đã chọn làm default cho dialog
+  const counts = {};
+  sessionIds.forEach(id => {
+    const s = _sessions.find(x => x.id === id);
+    const v = s ? (s.auto_rotate_seconds || 0) : 0;
+    counts[v] = (counts[v] || 0) + 1;
+  });
+  const mostCommon = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || 0;
+
+  const seconds = await pickAutoRotateInterval(
+    parseInt(mostCommon),
+    `Cấu hình tự đổi IP cho ${sessionIds.length} session đã chọn`
+  );
+  if (seconds === null) return;
+  try {
+    const r = await Api.setAutoRotateBatch(sessionIds, seconds);
+    Toast.success(seconds > 0
+      ? `Đã đặt tự đổi IP mỗi ${fmtSeconds(seconds)} cho ${r.updated} session`
+      : `Đã tắt tự đổi IP cho ${r.updated} session`);
+    loadSessions();
+  } catch (e) { Toast.error('Lỗi: ' + e.message); }
+}
+
 // Per-session rule manager modal ─────────────────────────────────────────────
 let _srSid = 0;
+
+// ─── Tự đổi IP (auto-rotate) ───────────────────────────
+//
+// Preset chu kỳ phổ biến. Giá trị tính bằng giây. 0 = TẮT.
+// Backend yêu cầu tối thiểu 60 giây — UI cho phép custom nhưng warn.
+const AUTO_ROTATE_PRESETS = [
+  { sec: 0,     label: 'Tắt' },
+  { sec: 300,   label: '5 phút' },
+  { sec: 600,   label: '10 phút' },
+  { sec: 900,   label: '15 phút' },
+  { sec: 1800,  label: '30 phút' },
+  { sec: 3600,  label: '1 giờ' },
+  { sec: 7200,  label: '2 giờ' },
+  { sec: 21600, label: '6 giờ' },
+  { sec: 43200, label: '12 giờ' },
+  { sec: 86400, label: '24 giờ' },
+];
+
+function fmtSeconds(sec) {
+  sec = parseInt(sec) || 0;
+  if (sec <= 0) return 'Tắt';
+  if (sec < 60)   return sec + 's';
+  if (sec < 3600) return Math.round(sec / 60) + ' phút';
+  if (sec < 86400) {
+    const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+    return m ? `${h}g ${m}p` : `${h} giờ`;
+  }
+  const d = Math.floor(sec / 86400), h = Math.round((sec % 86400) / 3600);
+  return h ? `${d} ngày ${h}g` : `${d} ngày`;
+}
+
+// autoRotateBadge — render cell hiển thị trạng thái auto-rotate.
+// Khi bật, hiển thị thêm "còn N phút" tới lần đổi kế tiếp.
+function autoRotateBadge(seconds, lastRotateAt) {
+  if (!seconds || seconds <= 0) {
+    return `<span class="muted small">— Tắt</span>`;
+  }
+  let etaText = '';
+  if (lastRotateAt) {
+    const last = new Date(lastRotateAt).getTime();
+    const dueAt = last + seconds * 1000;
+    const remainMs = dueAt - Date.now();
+    if (remainMs <= 0) etaText = ' · sắp đổi';
+    else etaText = ' · còn ' + fmtSeconds(Math.round(remainMs / 1000));
+  }
+  return `<span class="mono small" style="color:#86efac">⟳ ${fmtSeconds(seconds)}</span><span class="muted small">${etaText}</span>`;
+}
+
+async function openAutoRotateDialog(sid) {
+  const s = _sessions.find(x => x.id === sid);
+  const current = s ? (s.auto_rotate_seconds || 0) : 0;
+  const seconds = await pickAutoRotateInterval(current, `Cấu hình tự đổi IP cho phiên #${sid}`);
+  if (seconds === null) return;
+  try {
+    await Api.setAutoRotate(sid, seconds);
+    Toast.success(seconds > 0
+      ? `Đã bật tự đổi IP mỗi ${fmtSeconds(seconds)} cho phiên #${sid}`
+      : `Đã tắt tự đổi IP cho phiên #${sid}`);
+    loadSessions();
+  } catch (e) { Toast.error('Lỗi: ' + e.message); }
+}
+
+// pickAutoRotateInterval — dialog chọn preset, hỗ trợ tùy chỉnh (custom seconds).
+// Trả: số giây (>=0), hoặc null nếu user hủy.
+async function pickAutoRotateInterval(currentSec, title) {
+  let chosen = null;
+  const options = AUTO_ROTATE_PRESETS.map(p =>
+    `<button class="ar-preset ${p.sec === currentSec ? 'active' : ''}" data-sec="${p.sec}">${escapeHTML(p.label)}</button>`
+  ).join('');
+  const result = await Dialog.show({
+    title,
+    bodyHTML: `
+      <div class="dlg-msg">Chọn chu kỳ tự đổi IP. Tối thiểu <b>60 giây</b> (để tránh BRAS storm).</div>
+      <div class="ar-presets" style="display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 6px">${options}</div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+        <label class="muted small" style="flex:none">Tùy chỉnh:</label>
+        <input type="number" id="ar-custom" min="60" step="60" placeholder="số giây (>= 60)" style="max-width:160px">
+        <span class="muted small">giây · <span id="ar-preview">—</span></span>
+      </div>`,
+    actions: [
+      { label: 'Hủy',  kind: 'secondary', value: '__cancel__' },
+      { label: 'Lưu',  kind: 'primary',   value: '__ok__' },
+    ],
+    dismissValue: '__cancel__',
+    onMount: (bg) => {
+      const customInp = bg.querySelector('#ar-custom');
+      const preview   = bg.querySelector('#ar-preview');
+      // Click preset → set chosen + clear custom + highlight
+      bg.querySelectorAll('.ar-preset').forEach(btn => {
+        btn.addEventListener('click', () => {
+          chosen = parseInt(btn.dataset.sec);
+          customInp.value = '';
+          preview.textContent = '—';
+          bg.querySelectorAll('.ar-preset').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        });
+      });
+      // Gõ custom → live preview, clear preset highlight
+      customInp.addEventListener('input', () => {
+        const v = parseInt(customInp.value);
+        if (!isNaN(v) && v > 0) {
+          chosen = v;
+          preview.textContent = fmtSeconds(v);
+        } else {
+          chosen = null;
+          preview.textContent = '—';
+        }
+        bg.querySelectorAll('.ar-preset').forEach(b => b.classList.remove('active'));
+      });
+      // Pre-fill chosen với current để Lưu mà không đổi gì cũng được
+      chosen = currentSec;
+    },
+  });
+  if (result !== '__ok__') return null;
+  if (chosen === null) {
+    Toast.error('Chưa chọn chu kỳ');
+    return null;
+  }
+  if (chosen > 0 && chosen < 60) {
+    Toast.error('Chu kỳ tối thiểu 60 giây');
+    return null;
+  }
+  return chosen;
+}
 
 async function openSessionRules(sid) {
   _srSid = sid;

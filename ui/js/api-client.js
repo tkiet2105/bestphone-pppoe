@@ -85,6 +85,8 @@ const Api = (() => {
     deleteSession: (id) => _req('POST', `/sessions/${id}/delete`),
     rotateSession: (id) => _req('POST', `/sessions/${id}/rotate`),
     setSessionEnabled: (id, enabled) => _req('POST', `/sessions/${id}/enabled`, { enabled }),
+    setAutoRotate: (id, seconds) => _req('PUT', `/sessions/${id}/auto-rotate`, { seconds }),
+    setAutoRotateBatch: (ids, seconds) => _req('POST', '/sessions/auto-rotate/batch', { session_ids: ids, seconds }),
     rotateBatch: (ids, concurrency) => _req('POST', '/rotate', { session_ids: ids, concurrency: concurrency || 5 }),
 
     // creds

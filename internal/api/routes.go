@@ -34,6 +34,8 @@ func RegisterRoutes(r *gin.Engine) {
 		g.POST("/sessions/:id/delete", DeleteSession)
 		g.POST("/sessions/:id/rotate", RotateSession)
 		g.POST("/sessions/:id/enabled", SetSessionEnabled)
+		g.PUT("/sessions/:id/auto-rotate", SetSessionAutoRotate)
+		g.POST("/sessions/auto-rotate/batch", SetSessionAutoRotateBatch)
 
 		g.GET("/proxies/export", ExportProxies)
 		g.GET("/proxies/:id/credentials", ListCreds)

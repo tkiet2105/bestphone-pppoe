@@ -25,19 +25,20 @@ const (
 )
 
 type Session struct {
-	Id           uint       `gorm:"primaryKey" json:"id"`
-	LineId       uint       `gorm:"index;not null" json:"line_id"`
-	PppUnit      int        `gorm:"uniqueIndex;not null" json:"ppp_unit"`
-	Iface        string     `gorm:"size:32" json:"iface"`
-	Username     string     `gorm:"size:128;not null" json:"username"`
-	Password     string     `gorm:"size:256;not null" json:"password"`
-	MAC          string     `gorm:"size:32;index" json:"mac"`
-	Status       string     `gorm:"size:16;default:'disconnected'" json:"status"`
-	IP           string     `gorm:"size:64" json:"ip"`
-	PublicIP     string     `gorm:"size:64" json:"public_ip"`
-	LastError    string     `gorm:"size:256" json:"last_error"`
-	LastRotateAt *time.Time `json:"last_rotate_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
+	Id                uint       `gorm:"primaryKey" json:"id"`
+	LineId            uint       `gorm:"index;not null" json:"line_id"`
+	PppUnit           int        `gorm:"uniqueIndex;not null" json:"ppp_unit"`
+	Iface             string     `gorm:"size:32" json:"iface"`
+	Username          string     `gorm:"size:128;not null" json:"username"`
+	Password          string     `gorm:"size:256;not null" json:"password"`
+	MAC               string     `gorm:"size:32;index" json:"mac"`
+	Status            string     `gorm:"size:16;default:'disconnected'" json:"status"`
+	IP                string     `gorm:"size:64" json:"ip"`
+	PublicIP          string     `gorm:"size:64" json:"public_ip"`
+	LastError         string     `gorm:"size:256" json:"last_error"`
+	LastRotateAt      *time.Time `json:"last_rotate_at,omitempty"`
+	AutoRotateSeconds int        `gorm:"default:0" json:"auto_rotate_seconds"` // 0=tắt, else chu kỳ giây
+	CreatedAt         time.Time  `json:"created_at"`
 }
 
 type Proxy struct {

@@ -21,7 +21,7 @@ import (
 )
 
 // appVersion phải khớp với /VERSION ở repo root. Bump cả 2 cùng lúc khi ready-to-ship.
-const appVersion = "1.7.1"
+const appVersion = "1.8.0"
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
@@ -53,6 +53,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	pppoe.M.StartWatchdog(ctx)
+	pppoe.M.StartAutoRotate(ctx)
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
