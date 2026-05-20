@@ -65,6 +65,9 @@ const Api = (() => {
     updateRule: (id, data) => _req('PUT', `/rules/${id}`, data),
     deleteRule: (id) => _req('DELETE', `/rules/${id}`),
 
+    // stats (dashboard)
+    getStats: () => _req('GET', '/stats'),
+
     // lines
     listLines: () => _req('GET', '/lines'),
     createLine: (data) => _req('POST', '/lines', data),
@@ -330,7 +333,7 @@ function renderNav(active) {
     <header>
       <h1>bestphone-pppoe</h1>
       <nav>
-        <a href="/lines.html" class="${active==='lines'?'active':''}">Đường truyền</a>
+        <a href="/lines.html" class="${active==='lines'?'active':''}">Tổng quan</a>
         <a href="/sessions.html" class="${active==='sessions'?'active':''}">Phiên</a>
         <a href="/rules.html" class="${active==='rules'?'active':''}">Rules</a>
         <a href="/export.html" class="${active==='export'?'active':''}">Xuất proxy</a>

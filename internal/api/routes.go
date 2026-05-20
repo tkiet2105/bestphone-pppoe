@@ -45,6 +45,7 @@ func RegisterRoutes(r *gin.Engine) {
 		g.POST("/rotate", RotateBatch)
 
 		g.GET("/logs", GetLogs)
+		g.GET("/stats", GetStats)
 
 		g.GET("/rules", ListRules)
 		g.POST("/rules", CreateRule)

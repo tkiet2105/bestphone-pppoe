@@ -2,15 +2,98 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
-  <title>Lines — bestphone-pppoe</title>
+  <title>Tổng quan — bestphone-pppoe</title>
   <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
   <main>
+    <!-- Dashboard stats — 4 nhóm card -->
+    <div class="stats-grid">
+      <!-- ───── Hệ thống ───── -->
+      <div class="card stat-card">
+        <div class="stat-head">
+          <span class="stat-title">Hệ thống</span>
+          <span class="muted small" id="st-service-ver">—</span>
+        </div>
+        <div class="stat-row">
+          <div class="stat-label">CPU</div>
+          <div class="stat-bar"><div class="stat-bar-fill" id="st-cpu-bar"></div></div>
+          <div class="stat-val mono" id="st-cpu">—</div>
+        </div>
+        <div class="stat-row">
+          <div class="stat-label">RAM</div>
+          <div class="stat-bar"><div class="stat-bar-fill" id="st-mem-bar"></div></div>
+          <div class="stat-val mono" id="st-mem">—</div>
+        </div>
+        <div class="stat-row">
+          <div class="stat-label">Đĩa /var</div>
+          <div class="stat-bar"><div class="stat-bar-fill" id="st-disk-bar"></div></div>
+          <div class="stat-val mono" id="st-disk">—</div>
+        </div>
+        <div class="stat-mini-row">
+          <div><span class="muted small">Tải hệ thống (1·5·15p)</span> <span class="mono" id="st-load">—</span></div>
+          <div><span class="muted small">CPU core</span> <span class="mono" id="st-numcpu">—</span></div>
+        </div>
+        <div class="stat-mini-row">
+          <div><span class="muted small">Service uptime</span> <span class="mono" id="st-svc-up">—</span></div>
+          <div><span class="muted small">OS uptime</span> <span class="mono" id="st-os-up">—</span></div>
+        </div>
+      </div>
+
+      <!-- ───── PPPoE ───── -->
+      <div class="card stat-card">
+        <div class="stat-head"><span class="stat-title">PPPoE</span></div>
+        <div class="stat-big" id="st-sess-total">—</div>
+        <div class="muted small" style="margin-top:-6px;margin-bottom:8px">tổng số phiên trong hệ thống</div>
+        <div class="stat-pills">
+          <span class="pill pill-ok">  ✓ <span id="st-sess-conn">0</span> đã kết nối</span>
+          <span class="pill pill-info">⟳ <span id="st-sess-dial">0</span> đang quay</span>
+          <span class="pill pill-warn">! <span id="st-sess-err">0</span> lỗi</span>
+          <span class="pill pill-mute">— <span id="st-sess-down">0</span> đã ngắt</span>
+        </div>
+        <div class="stat-mini-row" style="margin-top:10px">
+          <div><span class="muted small">Đường truyền</span> <span class="mono" id="st-lines">—</span></div>
+          <div><span class="muted small">Có IP công cộng</span> <span class="mono" id="st-pubip">—</span></div>
+        </div>
+      </div>
+
+      <!-- ───── Proxy & Tài khoản ───── -->
+      <div class="card stat-card">
+        <div class="stat-head"><span class="stat-title">Proxy &amp; Tài khoản</span></div>
+        <div class="stat-big" id="st-proxy-running">—</div>
+        <div class="muted small" style="margin-top:-6px;margin-bottom:8px">proxy đang chạy</div>
+        <div class="stat-mini-row">
+          <div><span class="muted small">Tổng proxy</span> <span class="mono" id="st-proxy-total">—</span></div>
+          <div><span class="muted small">Đã dừng</span> <span class="mono" id="st-proxy-stop">—</span></div>
+        </div>
+        <div class="stat-mini-row">
+          <div><span class="muted small">Tài khoản proxy</span> <span class="mono" id="st-creds">—</span></div>
+          <div><span class="muted small">User UI</span> <span class="mono" id="st-users">—</span></div>
+        </div>
+        <div class="stat-mini-row">
+          <div><span class="muted small">API token</span> <span class="mono" id="st-apitok">—</span></div>
+          <div><span class="muted small">Goroutines</span> <span class="mono" id="st-grt">—</span></div>
+        </div>
+      </div>
+
+      <!-- ───── Luật chặn / Rules ───── -->
+      <div class="card stat-card">
+        <div class="stat-head"><span class="stat-title">Luật chặn</span></div>
+        <div class="stat-big" id="st-rules-total">—</div>
+        <div class="muted small" style="margin-top:-6px;margin-bottom:8px">tổng số luật đang áp dụng</div>
+        <div class="stat-mini-row">
+          <div><span class="muted small">Toàn hệ thống</span> <span class="mono" id="st-rules-global">—</span></div>
+          <div><span class="muted small">Theo phiên</span> <span class="mono" id="st-rules-session">—</span></div>
+        </div>
+        <a href="/rules.html" class="muted small" style="display:block;margin-top:10px">→ Quản lý luật</a>
+      </div>
+    </div>
+
+    <!-- Đường truyền PPPoE -->
     <div class="card">
       <div class="row" style="margin-bottom:12px">
-        <h2 style="margin:0;flex:1">Danh sách line PPPoE</h2>
-        <button onclick="openCreateLine()">+ Tạo line mới</button>
+        <h2 style="margin:0;flex:1">Danh sách đường truyền PPPoE</h2>
+        <button onclick="openCreateLine()">+ Tạo đường truyền mới</button>
       </div>
       <table id="lines-table">
         <thead><tr>

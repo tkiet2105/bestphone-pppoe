@@ -1,6 +1,91 @@
 if (!ensureAuth()) {} else {
   renderNav('lines');
   loadLines();
+  loadStats();
+  // Refresh stats mỗi 5s — light endpoint (~5ms backend, không spam DB).
+  setInterval(loadStats, 5000);
+}
+
+// ─── Dashboard stats ──────────────────────────────────────
+function fmtDuration(sec) {
+  sec = Math.floor(sec || 0);
+  if (sec < 60)   return sec + ' giây';
+  if (sec < 3600) return Math.floor(sec / 60) + ' phút';
+  if (sec < 86400) {
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+    return `${h}g ${m}p`;
+  }
+  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600);
+  return `${d} ngày ${h}g`;
+}
+
+function setBar(elBar, elVal, pct, valText) {
+  if (elVal) elVal.textContent = valText;
+  if (!elBar) return;
+  const p = Math.max(0, Math.min(100, pct || 0));
+  elBar.style.width = p + '%';
+  elBar.classList.remove('warn', 'danger');
+  if (p >= 90) elBar.classList.add('danger');
+  else if (p >= 75) elBar.classList.add('warn');
+}
+
+async function loadStats() {
+  try {
+    const s = await Api.getStats();
+    // Service version
+    document.getElementById('st-service-ver').textContent = 'v' + s.service.version;
+
+    // System gauges
+    setBar(
+      document.getElementById('st-cpu-bar'),
+      document.getElementById('st-cpu'),
+      s.system.cpu_percent,
+      `${s.system.cpu_percent}%`,
+    );
+    setBar(
+      document.getElementById('st-mem-bar'),
+      document.getElementById('st-mem'),
+      s.system.memory_percent,
+      `${s.system.memory_used_mb}/${s.system.memory_total_mb}MB · ${s.system.memory_percent}%`,
+    );
+    setBar(
+      document.getElementById('st-disk-bar'),
+      document.getElementById('st-disk'),
+      s.system.disk_percent,
+      `${s.system.disk_used_gb}/${s.system.disk_total_gb}GB · ${s.system.disk_percent}%`,
+    );
+    document.getElementById('st-load').textContent =
+      `${s.system.load_1} · ${s.system.load_5} · ${s.system.load_15}`;
+    document.getElementById('st-numcpu').textContent = s.system.num_cpu + ' core';
+    document.getElementById('st-svc-up').textContent = fmtDuration(s.service.uptime_seconds);
+    document.getElementById('st-os-up').textContent  = fmtDuration(s.system.uptime_seconds);
+
+    // PPPoE
+    document.getElementById('st-sess-total').textContent = s.sessions.total;
+    document.getElementById('st-sess-conn').textContent  = s.sessions.by_status.connected || 0;
+    document.getElementById('st-sess-dial').textContent  = s.sessions.by_status.dialing   || 0;
+    document.getElementById('st-sess-err').textContent   = s.sessions.by_status.error     || 0;
+    document.getElementById('st-sess-down').textContent  = s.sessions.by_status.disconnected || 0;
+    document.getElementById('st-lines').textContent = s.lines.total;
+    document.getElementById('st-pubip').textContent = s.sessions.with_public_ip;
+
+    // Proxy & accounts
+    document.getElementById('st-proxy-running').textContent = s.proxies.running;
+    document.getElementById('st-proxy-total').textContent   = s.proxies.total;
+    document.getElementById('st-proxy-stop').textContent    = s.proxies.stopped;
+    document.getElementById('st-creds').textContent  = s.credentials.total;
+    document.getElementById('st-users').textContent  = s.auth.users;
+    document.getElementById('st-apitok').textContent = s.auth.api_tokens;
+    document.getElementById('st-grt').textContent    = s.system.num_goroutine;
+
+    // Rules
+    document.getElementById('st-rules-total').textContent   = s.rules.total;
+    document.getElementById('st-rules-global').textContent  = s.rules.global;
+    document.getElementById('st-rules-session').textContent = s.rules.session;
+  } catch (e) {
+    // Silent fail trên auto-refresh — không spam toast
+    console.warn('Stats fetch failed:', e.message);
+  }
 }
 
 function openCreateLine() {
@@ -60,9 +145,9 @@ async function loadLines() {
           <a href="#" onclick="event.preventDefault();deleteLine(${r.id},'${escapeHTML(r.name)}')">Xóa</a>
         </td>
       </tr>
-    `).join('') || '<tr><td colspan="8" class="muted">Chưa có line nào. Bấm "+ Tạo line mới" để bắt đầu.</td></tr>';
+    `).join('') || '<tr><td colspan="8" class="muted">Chưa có đường truyền nào. Bấm "+ Tạo đường truyền mới" để bắt đầu.</td></tr>';
   } catch (e) {
-    Toast.error('Load lines: ' + e.message);
+    Toast.error('Lỗi tải danh sách: ' + e.message);
   }
 }
 
@@ -86,18 +171,18 @@ async function submitCreateLine() {
   }
   try {
     await Api.createLine(data);
-    Toast.success('Đã tạo line');
+    Toast.success('Đã tạo đường truyền');
     closeModal('create-line-modal');
     loadLines();
   } catch (e) {
-    Toast.error('Lỗi tạo line: ' + e.message);
+    Toast.error('Lỗi tạo đường truyền: ' + e.message);
   }
 }
 
 async function editLine(id) {
   const lines = await Api.listLines();
   const l = lines.find(x => x.id === id);
-  if (!l) { Toast.error('Không tìm thấy line'); return; }
+  if (!l) { Toast.error('Không tìm thấy đường truyền'); return; }
   const newUser = await Dialog.prompt(
     `Sửa tên đăng nhập ISP cho đường truyền <b>${escapeHTML(l.name)}</b>:`,
     { title: 'Sửa tài khoản ISP', defaultValue: l.username || '', okText: 'Tiếp tục' }
