@@ -15,7 +15,7 @@ async function init() {
 // Danh sách endpoint hiện có, gom theo nhóm. Tên + mô tả việt hóa.
 const SPEC = [
   {
-    group: 'Sức khỏe & Đăng nhập',
+    group: 'Health & Auth',
     items: [
       { method: 'GET',  path: '/api/v1/health', desc: 'Kiểm tra dịch vụ + phiên bản. KHÔNG cần token.', auth: false,
         resp: '{ "service":"bestphone-pppoe", "status":"ok", "version":"1.6.x", "uptime": 123 }' },
@@ -94,14 +94,14 @@ const SPEC = [
     ],
   },
   {
-    group: 'Nhật ký',
+    group: 'Logs',
     items: [
       { method: 'GET', path: '/api/v1/logs?source=pppd&lines=200&since=15+minutes+ago&filter=AuthNak', desc: 'Đọc journalctl. source=backend|pppd|all. since theo định dạng systemd. Tùy chọn filter (so khớp chuỗi, không phân biệt hoa thường). Trả text/plain.',
         resp: '2026-05-19T08:29:26 debian8 pppd[532120]: sent [PAP AuthReq id=0x1 user="u_xxx" ...]\\n... [PAP AuthNak id=0x1 ""]' },
     ],
   },
   {
-    group: 'Luật chặn (cho phép / từ chối)',
+    group: 'Rules (cho phép / từ chối)',
     items: [
       { method: 'GET', path: '/api/v1/rules', desc: 'Liệt kê luật. Tham số: scope=global|session, session_id, action=allow|deny, kind=domain|ip.' },
       { method: 'POST', path: '/api/v1/rules', desc: 'Tạo luật. scope=global → áp dụng toàn cluster. scope=session → chỉ áp dụng cho phiên session_id đó.',
@@ -124,7 +124,7 @@ const SPEC = [
     ],
   },
   {
-    group: 'Thời gian thực (SSE)',
+    group: 'Realtime (SSE)',
     items: [
       { method: 'GET', path: '/api/v1/events?token=<token>', desc: 'Luồng Server-Sent Events. Các sự kiện: session.status, session.public_ip, session.rotate, proxy.cred_changed, proxy.started, proxy.stopped. Keepalive mỗi 15 giây.',
         note: 'JS: <code>new EventSource("/api/v1/events?token=" + token)</code>' },

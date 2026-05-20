@@ -332,9 +332,9 @@ function renderNav(active) {
       <nav>
         <a href="/lines.html" class="${active==='lines'?'active':''}">Đường truyền</a>
         <a href="/sessions.html" class="${active==='sessions'?'active':''}">Phiên</a>
-        <a href="/rules.html" class="${active==='rules'?'active':''}">Luật chặn</a>
+        <a href="/rules.html" class="${active==='rules'?'active':''}">Rules</a>
         <a href="/export.html" class="${active==='export'?'active':''}">Xuất proxy</a>
-        <a href="/logs.html" class="${active==='logs'?'active':''}">Nhật ký</a>
+        <a href="/logs.html" class="${active==='logs'?'active':''}">Logs</a>
         <a href="/api.html" class="${active==='api'?'active':''}">API</a>
         <a href="/settings.html" class="${active==='settings'?'active':''}">Cài đặt</a>
       </nav>
