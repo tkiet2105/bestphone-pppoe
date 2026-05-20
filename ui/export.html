@@ -2,23 +2,26 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
-  <title>Export — bestphone-pppoe</title>
+  <title>Xuất proxy — bestphone-pppoe</title>
   <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
   <main>
     <div class="card">
-      <h2>Export proxy</h2>
+      <h2>Xuất danh sách proxy</h2>
+      <p class="muted small" style="margin:-4px 0 12px">
+        Mỗi dòng có dạng <span class="mono">ip:port:tên_đăng_nhập:mật_khẩu</span> — sao chép trực tiếp để dùng cho phần mềm chấm sản phẩm, trình duyệt giả lập, v.v.
+      </p>
       <div class="row" style="margin-bottom:12px">
-        <select id="ex-type" style="max-width:200px">
-          <option value="public">Public IP (PPPoE)</option>
-          <option value="local">Local LAN IP</option>
+        <select id="ex-type" style="max-width:240px">
+          <option value="public">IP công cộng (qua PPPoE)</option>
+          <option value="local">IP nội bộ (LAN)</option>
         </select>
-        <button onclick="refresh()">Refresh</button>
-        <button class="secondary" onclick="copyAll()">Copy</button>
-        <a class="btn secondary" id="raw-link" target="_blank">Raw text</a>
+        <button onclick="refresh()">Tải lại</button>
+        <button class="secondary" onclick="copyAll()">Sao chép tất cả</button>
+        <a class="btn secondary" id="raw-link" target="_blank">Mở dạng văn bản thô</a>
       </div>
-      <pre class="export-text" id="ex-text">(đang load...)</pre>
+      <pre class="export-text" id="ex-text">(đang tải...)</pre>
     </div>
   </main>
   <script src="/js/api-client.js"></script>
@@ -32,14 +35,14 @@
       document.getElementById('raw-link').href = `/api/v1/proxies/export?type=${t}&format=text&token=${encodeURIComponent(Api.getToken())}`;
       try {
         const text = await Api.exportProxies(t, 'text');
-        document.getElementById('ex-text').textContent = text;
-      } catch (e) { Toast.error(e.message); }
+        document.getElementById('ex-text').textContent = text || '(Chưa có proxy nào — tạo phiên trên trang Phiên trước đã)';
+      } catch (e) { Toast.error('Lỗi tải danh sách: ' + e.message); }
     }
     async function copyAll() {
       const text = document.getElementById('ex-text').textContent;
       const ok = await copyText(text);
-      if (ok) Toast.success('Đã copy ' + text.split('\n').filter(Boolean).length + ' dòng');
-      else Toast.error('Browser từ chối copy');
+      if (ok) Toast.success('Đã sao chép ' + text.split('\n').filter(Boolean).length + ' dòng');
+      else Toast.error('Trình duyệt từ chối sao chép');
     }
   </script>
 </body>

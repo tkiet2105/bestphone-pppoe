@@ -2,77 +2,79 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
-  <title>Rules — bestphone-pppoe</title>
+  <title>Luật chặn — bestphone-pppoe</title>
   <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
   <main>
     <div class="card">
-      <h2>Access Rules — Whitelist / Blacklist</h2>
+      <h2>Luật chặn / cho phép truy cập</h2>
       <p class="muted small">
-        <strong>Deny-wins</strong>: 1 rule deny match → BLOCK. Có rule allow trong scope → <em>strict mode</em>: chỉ host match allow mới qua.
-        Domain dạng <span class="mono">example.com</span> (exact) hoặc <span class="mono">*.example.com</span> (suffix).
-        IP dạng <span class="mono">1.2.3.4</span> hoặc CIDR <span class="mono">10.0.0.0/8</span>.
+        <strong>Chặn ưu tiên</strong>: chỉ cần <em>1</em> luật <b>Chặn</b> khớp → traffic bị từ chối.
+        Nếu trong phạm vi có luật <b>Cho phép</b> → kích hoạt <em>chế độ giới hạn</em>:
+        chỉ những host khớp luật Cho phép mới qua.<br>
+        Tên miền dạng <span class="mono">example.com</span> (chính xác) hoặc <span class="mono">*.example.com</span> (mọi tên miền con).
+        Địa chỉ IP dạng <span class="mono">1.2.3.4</span> hoặc dải <span class="mono">10.0.0.0/8</span>.
       </p>
     </div>
 
-    <!-- Global -->
+    <!-- Luật toàn hệ thống -->
     <div class="card">
       <div class="row" style="margin-bottom:12px">
-        <h3 style="margin:0;flex:1">Global rules <span class="muted small" id="g-count"></span></h3>
-        <button onclick="openCreateRule('global')">+ Rule global</button>
+        <h3 style="margin:0;flex:1">Luật toàn hệ thống <span class="muted small" id="g-count"></span></h3>
+        <button onclick="openCreateRule('global')">+ Thêm luật toàn hệ thống</button>
       </div>
       <table id="g-table">
         <thead><tr>
-          <th>ID</th><th>Action</th><th>Kind</th><th>Value</th><th>Note</th><th class="actions"></th>
+          <th>ID</th><th>Hành động</th><th>Loại</th><th>Giá trị</th><th>Ghi chú</th><th class="actions">Thao tác</th>
         </tr></thead>
         <tbody></tbody>
       </table>
     </div>
 
-    <!-- Session-scope -->
+    <!-- Luật theo phiên -->
     <div class="card">
       <div class="row" style="margin-bottom:12px">
-        <h3 style="margin:0;flex:1">Session rules</h3>
-        <select id="s-pick" style="max-width:280px" onchange="loadSessionRules()">
-          <option value="">— chọn session —</option>
+        <h3 style="margin:0;flex:1">Luật theo từng phiên</h3>
+        <select id="s-pick" style="max-width:300px" onchange="loadSessionRules()">
+          <option value="">— chọn phiên —</option>
         </select>
-        <button onclick="openCreateRule('session')" id="s-add-btn" disabled>+ Rule</button>
+        <button onclick="openCreateRule('session')" id="s-add-btn" disabled>+ Thêm luật cho phiên</button>
       </div>
       <table id="s-table">
         <thead><tr>
-          <th>ID</th><th>Action</th><th>Kind</th><th>Value</th><th>Note</th><th class="actions"></th>
+          <th>ID</th><th>Hành động</th><th>Loại</th><th>Giá trị</th><th>Ghi chú</th><th class="actions">Thao tác</th>
         </tr></thead>
-        <tbody><tr><td colspan="6" class="muted">Chọn session trên dropdown để xem/quản lý rules.</td></tr></tbody>
+        <tbody><tr><td colspan="6" class="muted">Chọn phiên trong danh sách bên trên để xem và quản lý luật cho phiên đó.</td></tr></tbody>
       </table>
     </div>
   </main>
 
-  <!-- Create modal -->
+  <!-- Modal tạo luật -->
   <div class="modal-bg" id="rule-modal">
     <div class="modal">
-      <h3 id="rm-title">Tạo rule</h3>
+      <h3 id="rm-title">Tạo luật mới</h3>
       <input type="hidden" id="rm-scope">
       <input type="hidden" id="rm-session-id">
-      <div class="form-row"><label>Action</label>
+      <div class="form-row"><label>Hành động</label>
         <select id="rm-action">
-          <option value="deny">DENY (blacklist)</option>
-          <option value="allow">ALLOW (whitelist — kích hoạt strict mode)</option>
+          <option value="deny">Chặn (blacklist)</option>
+          <option value="allow">Cho phép (whitelist — sẽ kích hoạt chế độ giới hạn)</option>
         </select>
       </div>
-      <div class="form-row"><label>Kind</label>
+      <div class="form-row"><label>Loại</label>
         <select id="rm-kind" onchange="updateRulePlaceholder()">
-          <option value="domain">Domain</option>
-          <option value="ip">IP / CIDR</option>
+          <option value="domain">Tên miền</option>
+          <option value="ip">Địa chỉ IP / dải IP</option>
         </select>
       </div>
-      <div class="form-row"><label>Value</label>
+      <div class="form-row"><label>Giá trị</label>
         <input id="rm-value" placeholder="example.com hoặc *.example.com">
       </div>
-      <div class="form-row"><label>Note (optional)</label><input id="rm-note"></div>
+      <div class="form-row"><label>Ghi chú (tùy chọn)</label><input id="rm-note"></div>
       <div class="actions">
         <button class="secondary" onclick="closeModal('rule-modal')">Hủy</button>
-        <button onclick="submitRule()">Tạo</button>
+        <button onclick="submitRule()">Tạo luật</button>
       </div>
     </div>
   </div>

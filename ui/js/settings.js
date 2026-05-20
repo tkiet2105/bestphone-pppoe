@@ -80,17 +80,41 @@ async function createApiToken() {
   const label = document.getElementById('tk-label').value.trim();
   try {
     const r = await Api.createToken(label);
-    // Hiển thị token đầy đủ 1 lần
-    const ok = await copyText(r.token);
-    if (ok) Toast.success(`Đã tạo + sao chép token vào clipboard (id=${r.id}). Dán + lưu lại ngay.`);
-    alert('Token đã tạo (lưu ngay, không xem lại được):\n\n' + r.token);
+    // Hiển thị token đầy đủ 1 lần qua Dialog (kèm sao chép tự động)
+    const copied = await copyText(r.token);
+    await Dialog.show({
+      title: 'API token mới đã tạo',
+      bodyHTML: `<div class="dlg-msg dlg-warn">
+          ⚠ Token đầy đủ chỉ hiển thị <b>1 lần duy nhất</b>. Hãy lưu lại ngay vào nơi an toàn — sau khi đóng hộp thoại này, hệ thống không thể hiển thị lại.
+        </div>
+        <div style="margin-top:12px">
+          <div class="muted small" style="margin-bottom:4px">Nhãn:</div>
+          <div class="mono">${escapeHTML(r.label || '(không nhãn)')}</div>
+        </div>
+        <div style="margin-top:10px">
+          <div class="muted small" style="margin-bottom:4px">Token:</div>
+          <textarea readonly style="width:100%;min-height:60px;font-family:'SF Mono',Monaco,monospace;font-size:12px">${escapeHTML(r.token)}</textarea>
+        </div>
+        ${copied ? '<div class="dlg-msg dlg-success" style="margin-top:8px">✓ Đã tự động sao chép vào clipboard.</div>' : ''}`,
+      actions: [{ label: 'Sao chép lại', kind: 'secondary', value: 'copy' }, { label: 'Tôi đã lưu, đóng', kind: 'primary', value: 'close' }],
+      dismissValue: 'close',
+    }).then(async (v) => {
+      if (v === 'copy') {
+        const ok2 = await copyText(r.token);
+        if (ok2) Toast.success('Đã sao chép token');
+      }
+    });
     document.getElementById('tk-label').value = '';
     loadApiTokens();
   } catch (e) { Toast.error('Lỗi tạo token: ' + e.message); }
 }
 
 async function deleteApiToken(id) {
-  if (!confirm(`Xóa API token #${id}? Mọi script đang dùng token này sẽ ngừng hoạt động.`)) return;
+  const ok = await Dialog.confirm(
+    `Xóa API token #${id}?\n\nMọi script đang dùng token này sẽ ngừng hoạt động ngay lập tức.`,
+    { title: 'Xác nhận xóa token', okText: 'Xóa', danger: true }
+  );
+  if (!ok) return;
   try {
     await Api.deleteToken(id);
     Toast.success('Đã xóa');

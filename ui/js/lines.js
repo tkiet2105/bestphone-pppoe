@@ -78,7 +78,11 @@ async function submitCreateLine() {
   };
   if (!data.name || !data.iface) { Toast.error('Tên + cổng mạng là bắt buộc'); return; }
   if (!data.username || !data.password) {
-    if (!confirm('Chưa nhập tài khoản ISP — session của line này sẽ không quay số được. Vẫn tạo line trống?')) return;
+    const ok = await Dialog.confirm(
+      'Bạn chưa nhập tài khoản ISP. Các phiên của đường truyền này sẽ <b>không quay số được</b>.\n\nVẫn tạo đường truyền trống?',
+      { title: 'Thiếu tài khoản ISP', okText: 'Vẫn tạo', kind: 'warn' }
+    );
+    if (!ok) return;
   }
   try {
     await Api.createLine(data);
@@ -94,9 +98,15 @@ async function editLine(id) {
   const lines = await Api.listLines();
   const l = lines.find(x => x.id === id);
   if (!l) { Toast.error('Không tìm thấy line'); return; }
-  const newUser = prompt(`Tài khoản ISP (hiện tại: "${l.username || ''}"):`, l.username || '');
+  const newUser = await Dialog.prompt(
+    `Sửa tên đăng nhập ISP cho đường truyền <b>${escapeHTML(l.name)}</b>:`,
+    { title: 'Sửa tài khoản ISP', defaultValue: l.username || '', okText: 'Tiếp tục' }
+  );
   if (newUser === null) return;
-  const newPass = prompt(`Mật khẩu ISP (hiện tại: "${l.password || ''}"):`, l.password || '');
+  const newPass = await Dialog.prompt(
+    `Sửa mật khẩu ISP cho đường truyền <b>${escapeHTML(l.name)}</b> (để trống nếu không đổi mật khẩu):`,
+    { title: 'Sửa mật khẩu ISP', defaultValue: l.password || '', password: true, okText: 'Lưu' }
+  );
   if (newPass === null) return;
   try {
     await Api.updateLine(id, { username: newUser, password: newPass });
@@ -106,10 +116,14 @@ async function editLine(id) {
 }
 
 async function deleteLine(id, name) {
-  if (!confirm(`Xóa line "${name}" và TẤT CẢ session/proxy thuộc line này? Hành động không thể hoàn tác.`)) return;
+  const ok = await Dialog.confirm(
+    `Xóa đường truyền <b>"${escapeHTML(name)}"</b> và <b>TẤT CẢ</b> phiên / proxy thuộc đường truyền này?\n\nHành động không thể hoàn tác.`,
+    { title: 'Xác nhận xóa đường truyền', okText: 'Xóa', danger: true }
+  );
+  if (!ok) return;
   try {
     await Api.deleteLine(id);
-    Toast.success('Đã xóa line');
+    Toast.success('Đã xóa đường truyền');
     loadLines();
   } catch (e) {
     Toast.error('Lỗi xóa: ' + e.message);

@@ -376,7 +376,11 @@ async function bulkAction(act) {
     case 'copy-default-pub':   return copyCredsByType('public', ids, true);
     case 'copy-default-local': return copyCredsByType('local',  ids, true);
     case 'delete': {
-      if (!confirm(`Xóa ${ids.length} session đã chọn? Hành động không thể hoàn tác.`)) return;
+      const okDel = await Dialog.confirm(
+        `Xóa <b>${ids.length}</b> phiên đã chọn?\n\nHành động không thể hoàn tác.`,
+        { title: 'Xác nhận xóa nhiều phiên', okText: `Xóa ${ids.length} phiên`, danger: true }
+      );
+      if (!okDel) return;
       Toast.info(`Đang xóa ${ids.length} session...`);
       const results = await Promise.allSettled(ids.map(id => Api.deleteSession(id)));
       const okN = results.filter(r => r.status === 'fulfilled').length;
@@ -492,7 +496,11 @@ async function toggleEnabled(id, currentStatus) {
 }
 
 async function deleteSession(id) {
-  if (!confirm(`Xóa session ${id}? Hành động không thể hoàn tác.`)) return;
+  const ok = await Dialog.confirm(
+    `Xóa phiên <b>#${id}</b>?\n\nHành động không thể hoàn tác.`,
+    { title: 'Xác nhận xóa phiên', okText: 'Xóa', danger: true }
+  );
+  if (!ok) return;
   try {
     await Api.deleteSession(id);
     Toast.success('Đã xóa session');

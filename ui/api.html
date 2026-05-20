@@ -4,19 +4,46 @@
   <meta charset="UTF-8">
   <title>API — bestphone-pppoe</title>
   <link rel="stylesheet" href="/css/app.css">
+  <style>
+    .api-layout { display: grid; grid-template-columns: 240px 1fr; gap: 16px; align-items: start; }
+    .api-side {
+      position: sticky; top: 76px;
+      background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+      padding: 12px; max-height: calc(100vh - 100px); overflow-y: auto;
+    }
+    .api-side h4 { margin: 0 0 8px; font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
+    .api-side a {
+      display: flex; justify-content: space-between; align-items: baseline;
+      padding: 6px 10px; border-radius: 6px;
+      color: #cbd5e1; font-size: 13px;
+      text-decoration: none;
+    }
+    .api-side a:hover { background: #334155; color: #f1f5f9; }
+    .api-side a.active { background: #2563eb; color: #fff; }
+    .api-side .count { font-size: 10.5px; color: #64748b; }
+    .api-side a.active .count { color: rgba(255,255,255,0.8); }
+    @media (max-width: 900px) {
+      .api-layout { grid-template-columns: 1fr; }
+      .api-side { position: static; max-height: none; }
+    }
+  </style>
 </head>
 <body>
   <main>
     <div class="card">
-      <h2>REST API <span class="muted small" id="api-version"></span></h2>
+      <h2>Tài liệu REST API <span class="muted small" id="api-version"></span></h2>
       <p class="muted small">
-        Base: <span class="mono">/api/v1</span> · Auth: header <span class="mono">Authorization: Bearer &lt;token&gt;</span>
-        (hoặc query <span class="mono">?token=...</span> cho SSE). Response chuẩn:
-        <span class="mono">{ "success": true, "data": ... }</span> hoặc <span class="mono">{ "success": false, "error": "..." }</span>.
+        Đường dẫn gốc: <span class="mono">/api/v1</span> · Xác thực: header <span class="mono">Authorization: Bearer &lt;token&gt;</span>
+        (hoặc tham số <span class="mono">?token=...</span> cho luồng SSE). Định dạng phản hồi chuẩn:
+        <span class="mono">{ "success": true, "data": ... }</span> hoặc <span class="mono">{ "success": false, "error": "..." }</span>.<br>
+        <b>Lưu ý đăng nhập</b>: từ phiên bản 1.6.0, đăng nhập UI dùng <i>tên đăng nhập + mật khẩu</i>. Endpoint <span class="mono">POST /auth/login</span> trả về token phiên — gán vào header Bearer như mọi endpoint khác.
       </p>
-      <input class="api-search" id="api-search" placeholder="Tìm endpoint (path, method, mô tả)..." oninput="filterApi()">
+      <input class="api-search" id="api-search" placeholder="Tìm endpoint theo đường dẫn, phương thức hoặc mô tả..." oninput="filterApi()">
     </div>
-    <div id="api-content"></div>
+    <div class="api-layout">
+      <aside class="api-side" id="api-side"></aside>
+      <div id="api-content"></div>
+    </div>
   </main>
   <script src="/js/api-client.js"></script>
   <script src="/js/api-page.js"></script>

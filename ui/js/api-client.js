@@ -111,6 +111,181 @@ const Api = (() => {
   };
 })();
 
+// ─── Dialog — Promise-based custom modal thay alert/confirm/prompt ──────────
+// Mọi action quan trọng (xác nhận xóa, hiển thị giá trị quan trọng, nhập sửa)
+// đều dùng Dialog thay vì alert/confirm/prompt của trình duyệt. Lý do:
+//   1. Trải nghiệm thống nhất (style theo card/modal hiện có).
+//   2. Hiển thị tốt đa dòng, mono, code block.
+//   3. Không bị bật cảnh báo "trang này muốn hiển thị thông báo" trên 1 số browser.
+//
+// API:
+//   await Dialog.alert(message, {title?, kind?: 'info'|'warn'|'danger'|'success'})
+//   await Dialog.confirm(message, {title?, okText?, cancelText?, kind?, danger?: bool})
+//   await Dialog.prompt(message, {title?, defaultValue?, password?, okText?, cancelText?})
+//   await Dialog.show({title, bodyHTML, actions:[{label, kind?, value?}], dismissValue?})
+//      → return value của action được chọn (hoặc dismissValue nếu đóng qua Escape/backdrop)
+const Dialog = (() => {
+  let zCounter = 1000;
+
+  function escape(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function nl2br(s) { return escape(s).replace(/\n/g, '<br>'); }
+
+  function show({ title, bodyHTML, actions, dismissValue, onMount, autofocusSel }) {
+    return new Promise(resolve => {
+      const z = ++zCounter;
+      const bg = document.createElement('div');
+      bg.className = 'dlg-bg';
+      bg.style.zIndex = z;
+      bg.innerHTML = `<div class="dlg" role="dialog" aria-modal="true">
+        ${title ? `<div class="dlg-title">${escape(title)}</div>` : ''}
+        <div class="dlg-body">${bodyHTML || ''}</div>
+        <div class="dlg-actions"></div>
+      </div>`;
+      const act = bg.querySelector('.dlg-actions');
+      (actions || [{ label: 'OK', value: true, kind: 'primary' }]).forEach((a, i) => {
+        const btn = document.createElement('button');
+        btn.textContent = a.label;
+        if (a.kind === 'secondary') btn.className = 'secondary';
+        else if (a.kind === 'danger') btn.className = 'danger';
+        btn.addEventListener('click', () => done(a.value));
+        act.appendChild(btn);
+      });
+      document.body.appendChild(bg);
+
+      function done(v) {
+        document.removeEventListener('keydown', onKey, true);
+        bg.classList.add('dlg-closing');
+        setTimeout(() => { bg.remove(); resolve(v); }, 120);
+      }
+      function onKey(e) {
+        if (e.key === 'Escape') { e.preventDefault(); done(dismissValue); }
+        else if (e.key === 'Enter' && (e.target.tagName !== 'TEXTAREA')) {
+          // Enter trigger action đầu tiên (thường là OK)
+          const firstBtn = act.querySelector('button');
+          if (firstBtn) { e.preventDefault(); firstBtn.click(); }
+        }
+      }
+      bg.addEventListener('click', (e) => { if (e.target === bg) done(dismissValue); });
+      document.addEventListener('keydown', onKey, true);
+
+      if (onMount) onMount(bg);
+      const focusTarget = autofocusSel ? bg.querySelector(autofocusSel) : act.querySelector('button');
+      if (focusTarget) focusTarget.focus();
+    });
+  }
+
+  async function alert(message, opts) {
+    opts = opts || {};
+    const title = opts.title || 'Thông báo';
+    return show({
+      title,
+      bodyHTML: `<div class="dlg-msg ${opts.kind ? 'dlg-' + opts.kind : ''}">${nl2br(message)}</div>`,
+      actions: [{ label: opts.okText || 'OK', kind: opts.kind === 'danger' ? 'danger' : 'primary', value: true }],
+      dismissValue: true,
+    });
+  }
+
+  async function confirm(message, opts) {
+    opts = opts || {};
+    const title = opts.title || 'Xác nhận';
+    return show({
+      title,
+      bodyHTML: `<div class="dlg-msg ${opts.danger ? 'dlg-danger' : (opts.kind ? 'dlg-' + opts.kind : '')}">${nl2br(message)}</div>`,
+      actions: [
+        { label: opts.cancelText || 'Hủy', kind: 'secondary', value: false },
+        { label: opts.okText || 'Đồng ý', kind: opts.danger ? 'danger' : 'primary', value: true },
+      ],
+      dismissValue: false,
+    });
+  }
+
+  async function prompt(message, opts) {
+    opts = opts || {};
+    const title = opts.title || 'Nhập giá trị';
+    const inputType = opts.password ? 'password' : 'text';
+    const defVal = escape(opts.defaultValue || '');
+    const fieldHTML = `<input class="dlg-input" id="dlg-prompt-input" type="${inputType}" value="${defVal}" autocomplete="off">`;
+    let resolver;
+    const p = show({
+      title,
+      bodyHTML: `<div class="dlg-msg">${nl2br(message)}</div>${fieldHTML}`,
+      actions: [
+        { label: opts.cancelText || 'Hủy', kind: 'secondary', value: null },
+        { label: opts.okText || 'OK', kind: 'primary', value: '__OK__' },
+      ],
+      dismissValue: null,
+      autofocusSel: '#dlg-prompt-input',
+      onMount: (bg) => {
+        // Override: Enter trên input → confirm với giá trị hiện tại
+        const inp = bg.querySelector('#dlg-prompt-input');
+        if (inp) {
+          inp.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              const okBtn = bg.querySelector('.dlg-actions button:last-child');
+              if (okBtn) okBtn.click();
+            }
+          });
+        }
+      },
+    });
+    return p.then(v => {
+      if (v !== '__OK__') return null;
+      // Đọc giá trị input — input đã bị remove khỏi DOM khi resolve, nên ta đã đọc trước
+      // Workaround: lưu giá trị trước khi resolve. Đơn giản: read tại moment OK click.
+      // Lưu ý: show() đã .remove() trước khi resolve. Cần đọc giá trị ngay khi click.
+      // → refactor: dùng custom handler. Code below cho đúng.
+      return null;
+    });
+  }
+
+  // Vì cách show() resolve sau khi remove DOM khiến không đọc được input.value,
+  // ta override prompt() bằng phiên bản riêng.
+  async function promptV2(message, opts) {
+    opts = opts || {};
+    const title = opts.title || 'Nhập giá trị';
+    const inputType = opts.password ? 'password' : 'text';
+    const defVal = escape(opts.defaultValue || '');
+    return new Promise(resolve => {
+      const z = ++zCounter;
+      const bg = document.createElement('div');
+      bg.className = 'dlg-bg';
+      bg.style.zIndex = z;
+      bg.innerHTML = `<div class="dlg" role="dialog" aria-modal="true">
+        <div class="dlg-title">${escape(title)}</div>
+        <div class="dlg-body">
+          <div class="dlg-msg">${nl2br(message)}</div>
+          <input class="dlg-input" id="dlg-prompt-input" type="${inputType}" value="${defVal}" autocomplete="off">
+        </div>
+        <div class="dlg-actions">
+          <button class="secondary" data-act="cancel">${escape(opts.cancelText || 'Hủy')}</button>
+          <button data-act="ok">${escape(opts.okText || 'OK')}</button>
+        </div>
+      </div>`;
+      const inp = bg.querySelector('#dlg-prompt-input');
+      function done(v) {
+        document.removeEventListener('keydown', onKey, true);
+        bg.classList.add('dlg-closing');
+        setTimeout(() => { bg.remove(); resolve(v); }, 120);
+      }
+      function onKey(e) {
+        if (e.key === 'Escape') { e.preventDefault(); done(null); }
+      }
+      bg.querySelector('[data-act=cancel]').addEventListener('click', () => done(null));
+      bg.querySelector('[data-act=ok]').addEventListener('click', () => done(inp.value));
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); done(inp.value); }
+      });
+      bg.addEventListener('click', (e) => { if (e.target === bg) done(null); });
+      document.addEventListener('keydown', onKey, true);
+      document.body.appendChild(bg);
+      inp.focus(); inp.select();
+    });
+  }
+
+  return { show, alert, confirm, prompt: promptV2 };
+})();
+
 // --- UI helpers ---
 const Toast = (() => {
   function show(kind, msg) {
