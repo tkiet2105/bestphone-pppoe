@@ -120,6 +120,48 @@
     </div>
   </div>
 
+  <!-- Modal luật riêng cho 1 session -->
+  <div class="modal-bg" id="sess-rules-modal">
+    <div class="modal" style="min-width:680px">
+      <h3>Luật áp dụng cho phiên #<span id="sr-sid"></span> <span class="muted small" id="sr-sub"></span></h3>
+      <p class="muted small" style="margin:-6px 0 10px">
+        Các luật bên dưới chỉ áp dụng cho phiên này. Luật chặn ưu tiên (deny-wins).
+        Để áp dụng cho TẤT CẢ phiên, dùng trang <a href="/rules.html">Rules</a> (scope=global).
+      </p>
+      <table class="creds-table" id="sr-table">
+        <thead><tr>
+          <th style="width:50px">ID</th>
+          <th style="width:110px">Hành động</th>
+          <th style="width:110px">Loại</th>
+          <th>Giá trị</th>
+          <th>Ghi chú</th>
+          <th style="width:70px"></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+
+      <hr style="border:0;border-top:1px solid #334155;margin:16px 0">
+      <h4 style="margin:0 0 10px;font-size:14px">Thêm luật mới</h4>
+      <div class="row" style="gap:6px;flex-wrap:wrap">
+        <select id="sr-action" style="max-width:140px">
+          <option value="deny">Chặn</option>
+          <option value="allow">Cho phép</option>
+        </select>
+        <select id="sr-kind" style="max-width:140px" onchange="srUpdatePlaceholder()">
+          <option value="domain">Tên miền</option>
+          <option value="ip">IP / dải IP</option>
+        </select>
+        <input id="sr-value" placeholder="example.com hoặc *.example.com" style="min-width:240px;flex:1">
+        <input id="sr-note" placeholder="Ghi chú (tùy chọn)" style="max-width:200px">
+        <button onclick="submitSessionRule()">Thêm</button>
+      </div>
+
+      <div class="actions">
+        <button class="secondary" onclick="closeModal('sess-rules-modal')">Đóng</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Sao chép proxy modal -->
   <div class="modal-bg" id="export-modal">
     <div class="modal" style="min-width:640px">

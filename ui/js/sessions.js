@@ -136,6 +136,7 @@ function renderSessions() {
       <td class="actions">
         <button class="small" onclick="rotateSession(${s.id})">Đổi IP</button>
         <button class="small secondary" onclick="toggleEnabled(${s.id},'${s.proxy_status}')">${s.proxy_status === 'running' ? 'Tắt' : 'Bật'}</button>
+        <button class="small secondary" onclick="openSessionRules(${s.id})">Luật</button>
         <button class="small danger" onclick="deleteSession(${s.id})">Xóa</button>
       </td>
     </tr>`;
@@ -328,6 +329,13 @@ function _showCtxMenu(x, y) {
       <span class="ctx-icon">⎘</span><span style="flex:1">Sao chép <b>TẤT CẢ</b> tài khoản (IP nội bộ)</span>
     </div>
     <div class="ctx-sep"></div>
+    <div class="ctx-item" data-act="rule-add">
+      <span class="ctx-icon">⊕</span><span style="flex:1">Thêm luật cho ${n} session đã chọn…</span>
+    </div>
+    <div class="ctx-item" data-act="rule-clear">
+      <span class="ctx-icon">⊘</span><span style="flex:1">Xóa hết luật của ${n} session đã chọn</span>
+    </div>
+    <div class="ctx-sep"></div>
     <div class="ctx-item danger" data-act="delete">
       <span class="ctx-icon">✕</span><span style="flex:1">Xóa ${n} session đã chọn</span>
     </div>`;
@@ -375,6 +383,8 @@ async function bulkAction(act) {
     case 'copy-all-local':     return copyCredsByType('local',  ids, false);
     case 'copy-default-pub':   return copyCredsByType('public', ids, true);
     case 'copy-default-local': return copyCredsByType('local',  ids, true);
+    case 'rule-add':           return bulkAddRule(ids);
+    case 'rule-clear':         return bulkClearRules(ids);
     case 'delete': {
       const okDel = await Dialog.confirm(
         `Xóa <b>${ids.length}</b> phiên đã chọn?\n\nHành động không thể hoàn tác.`,
@@ -505,6 +515,185 @@ async function deleteSession(id) {
     await Api.deleteSession(id);
     Toast.success('Đã xóa session');
     loadSessions();
+  } catch (e) { Toast.error(e.message); }
+}
+
+// ─── Session-scoped rules: thêm hàng loạt + xóa hết + quản lý từng session ───
+//
+// Backend rules có scope=session, session_id=N. Listener cache rule per-proxy +
+// reload nóng khi mutate. Logic dưới đây tận dụng API rules sẵn có:
+//   GET    /rules?scope=session&session_id=N
+//   POST   /rules        body={scope, session_id, kind, action, value, note}
+//   DELETE /rules/:id
+
+async function bulkAddRule(sessionIds) {
+  // Dialog với form fields — Dialog.show trả Promise<value> tương ứng action.
+  // Đọc giá trị input bằng cách bắt OK ngay trong onMount (vì DOM bị remove khi resolve).
+  let formData = null;
+  const result = await Dialog.show({
+    title: `Thêm luật áp dụng cho ${sessionIds.length} phiên`,
+    bodyHTML: `
+      <div class="dlg-msg">Luật bên dưới sẽ được nhân ra <b>${sessionIds.length}</b> bản, mỗi bản gắn vào 1 phiên đã chọn.</div>
+      <div style="display:grid;grid-template-columns:120px 1fr;gap:8px;margin-top:12px;align-items:center">
+        <label class="muted small">Hành động</label>
+        <select id="bra-action">
+          <option value="deny">Chặn (deny)</option>
+          <option value="allow">Cho phép (allow) — kích hoạt chế độ giới hạn</option>
+        </select>
+        <label class="muted small">Loại</label>
+        <select id="bra-kind">
+          <option value="domain">Tên miền</option>
+          <option value="ip">IP / dải IP</option>
+        </select>
+        <label class="muted small">Giá trị</label>
+        <input id="bra-value" placeholder="example.com hoặc *.example.com">
+        <label class="muted small">Ghi chú</label>
+        <input id="bra-note" placeholder="(tùy chọn)">
+      </div>`,
+    actions: [
+      { label: 'Hủy', kind: 'secondary', value: '__cancel__' },
+      { label: 'Thêm luật', kind: 'primary', value: '__ok__' },
+    ],
+    dismissValue: '__cancel__',
+    autofocusSel: '#bra-value',
+    onMount: (bg) => {
+      // Cập nhật placeholder khi đổi loại
+      const kind = bg.querySelector('#bra-kind');
+      const val  = bg.querySelector('#bra-value');
+      kind.addEventListener('change', () => {
+        val.placeholder = kind.value === 'domain' ? 'example.com hoặc *.example.com' : '1.2.3.4 hoặc 10.0.0.0/8';
+      });
+      // Intercept click OK để snapshot form trước khi DOM bị remove
+      const okBtn = bg.querySelector('.dlg-actions button:last-child');
+      okBtn.addEventListener('click', () => {
+        formData = {
+          action: bg.querySelector('#bra-action').value,
+          kind:   bg.querySelector('#bra-kind').value,
+          value:  bg.querySelector('#bra-value').value.trim(),
+          note:   bg.querySelector('#bra-note').value.trim(),
+        };
+      }, true); // capture trước handler done()
+    },
+  });
+  if (result !== '__ok__' || !formData) return;
+  if (!formData.value) { Toast.error('Ô "Giá trị" không được để trống'); return; }
+
+  Toast.info(`Đang thêm luật cho ${sessionIds.length} phiên...`);
+  const results = await Promise.allSettled(sessionIds.map(sid => Api.createRule({
+    scope: 'session',
+    session_id: sid,
+    kind: formData.kind,
+    action: formData.action,
+    value: formData.value,
+    note: formData.note,
+  })));
+  const okN = results.filter(r => r.status === 'fulfilled').length;
+  const failN = results.length - okN;
+  if (failN) {
+    const reasons = [...new Set(results.filter(r => r.status === 'rejected').map(r => r.reason?.message || 'lỗi'))];
+    Toast.error(`Lỗi ${failN}/${results.length}: ${reasons.slice(0, 2).join(' / ')}`);
+  }
+  if (okN) Toast.success(`Đã thêm luật cho ${okN}/${results.length} phiên`);
+}
+
+async function bulkClearRules(sessionIds) {
+  // Count rules trước để hiển thị trong xác nhận
+  Toast.info('Đang đếm luật...');
+  const lists = await Promise.allSettled(sessionIds.map(sid =>
+    Api.listRules({ scope: 'session', session_id: sid })
+  ));
+  const allRules = [];
+  lists.forEach((r, idx) => {
+    if (r.status === 'fulfilled' && Array.isArray(r.value)) {
+      r.value.forEach(rule => allRules.push({ ...rule, _sid: sessionIds[idx] }));
+    }
+  });
+  if (!allRules.length) { Toast.info('Các phiên đã chọn không có luật riêng nào'); return; }
+
+  const ok = await Dialog.confirm(
+    `Xóa <b>${allRules.length}</b> luật áp dụng cho <b>${sessionIds.length}</b> phiên đã chọn?\n\nLuật toàn hệ thống (scope=global) KHÔNG bị ảnh hưởng.`,
+    { title: 'Xóa hết luật của các phiên đã chọn', okText: `Xóa ${allRules.length} luật`, danger: true }
+  );
+  if (!ok) return;
+
+  Toast.info(`Đang xóa ${allRules.length} luật...`);
+  const results = await Promise.allSettled(allRules.map(r => Api.deleteRule(r.id)));
+  const okN = results.filter(x => x.status === 'fulfilled').length;
+  if (okN === results.length) Toast.success(`Đã xóa ${okN} luật`);
+  else Toast.error(`Đã xóa ${okN}/${results.length} — ${results.length - okN} thất bại`);
+}
+
+// Per-session rule manager modal ─────────────────────────────────────────────
+let _srSid = 0;
+
+async function openSessionRules(sid) {
+  _srSid = sid;
+  document.getElementById('sr-sid').textContent = sid;
+  const s = _sessions.find(x => x.id === sid);
+  document.getElementById('sr-sub').textContent = s ? `(${s.username} · ${s.public_ip || s.ip || '—'})` : '';
+  document.getElementById('sr-action').value = 'deny';
+  document.getElementById('sr-kind').value = 'domain';
+  document.getElementById('sr-value').value = '';
+  document.getElementById('sr-note').value = '';
+  srUpdatePlaceholder();
+  document.getElementById('sess-rules-modal').classList.add('open');
+  await loadSessionRulesList();
+}
+
+function srUpdatePlaceholder() {
+  const k = document.getElementById('sr-kind').value;
+  document.getElementById('sr-value').placeholder = k === 'domain'
+    ? 'example.com hoặc *.example.com'
+    : '1.2.3.4 hoặc 10.0.0.0/8';
+}
+
+async function loadSessionRulesList() {
+  try {
+    const rs = await Api.listRules({ scope: 'session', session_id: _srSid });
+    const tbody = document.querySelector('#sr-table tbody');
+    if (!rs.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="muted">(phiên này chưa có luật riêng — chỉ áp dụng luật toàn hệ thống)</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rs.map(r => `<tr>
+      <td>${r.id}</td>
+      <td><span class="badge ${r.action === 'deny' ? 'error' : 'connected'}">${r.action === 'deny' ? 'Chặn' : 'Cho phép'}</span></td>
+      <td>${r.kind === 'domain' ? 'Tên miền' : 'IP/Dải IP'}</td>
+      <td class="mono">${escapeHTML(r.value)}</td>
+      <td class="muted small">${escapeHTML(r.note || '')}</td>
+      <td><button class="small danger" onclick="deleteSessionRule(${r.id})">Xóa</button></td>
+    </tr>`).join('');
+  } catch (e) { Toast.error('Lỗi tải luật: ' + e.message); }
+}
+
+async function submitSessionRule() {
+  const data = {
+    scope: 'session',
+    session_id: _srSid,
+    action: document.getElementById('sr-action').value,
+    kind:   document.getElementById('sr-kind').value,
+    value:  document.getElementById('sr-value').value.trim(),
+    note:   document.getElementById('sr-note').value.trim(),
+  };
+  if (!data.value) { Toast.error('Ô "Giá trị" không được để trống'); return; }
+  try {
+    await Api.createRule(data);
+    Toast.success('Đã thêm luật');
+    document.getElementById('sr-value').value = '';
+    document.getElementById('sr-note').value = '';
+    loadSessionRulesList();
+  } catch (e) { Toast.error('Lỗi thêm luật: ' + e.message); }
+}
+
+async function deleteSessionRule(id) {
+  const ok = await Dialog.confirm(`Xóa luật #${id} của phiên này?`, {
+    title: 'Xác nhận xóa luật', okText: 'Xóa', danger: true,
+  });
+  if (!ok) return;
+  try {
+    await Api.deleteRule(id);
+    Toast.success('Đã xóa luật');
+    loadSessionRulesList();
   } catch (e) { Toast.error(e.message); }
 }
 
