@@ -21,7 +21,7 @@ import (
 )
 
 // appVersion phải khớp với /VERSION ở repo root. Bump cả 2 cùng lúc khi ready-to-ship.
-const appVersion = "1.5.0"
+const appVersion = "1.6.0"
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
@@ -34,6 +34,9 @@ func main() {
 	}
 	if err := db.SeedAdminToken(cfg.AdminToken); err != nil {
 		log.Printf("seed admin token: %v", err)
+	}
+	if err := db.SeedAdminUser(cfg.AdminUsername, cfg.AdminPassword); err != nil {
+		log.Printf("seed admin user: %v", err)
 	}
 
 	hub := events.NewHub()

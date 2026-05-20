@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
-  <title>bestphone-pppoe — login</title>
+  <title>Đăng nhập — bestphone-pppoe</title>
   <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
@@ -10,33 +10,39 @@
     <h1>bestphone-pppoe</h1>
     <form id="login-form">
       <div class="form-row">
-        <label for="token">Admin token</label>
-        <input type="password" id="token" required autocomplete="off" autofocus>
+        <label for="username">Tên đăng nhập</label>
+        <input type="text" id="username" required autocomplete="username" autofocus>
+      </div>
+      <div class="form-row">
+        <label for="password">Mật khẩu</label>
+        <input type="password" id="password" required autocomplete="current-password">
       </div>
       <button type="submit">Đăng nhập</button>
     </form>
     <p class="muted small" style="margin-top:16px">
-      Token in ra cuối install hoặc lưu trong <span class="mono">/etc/default/bestphone-pppoe</span>
+      Mặc định lần đầu: <span class="mono">admin</span> / <span class="mono">bestphone</span>.
+      Sau khi đăng nhập, vào trang <b>Cài đặt</b> để đổi mật khẩu.
     </p>
   </div>
   <script src="/js/api-client.js"></script>
   <script>
     if (Api.getToken()) {
-      // already logged in — verify, redirect
+      // Đã có token — verify, redirect
       Api.health().then(() => location.href = '/lines.html').catch(() => Api.clearToken());
     }
     document.getElementById('login-form').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const tok = document.getElementById('token').value.trim();
-      if (!tok) return;
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      if (!username || !password) return;
       try {
-        const r = await Api.login(tok);
+        const r = await Api.login(username, password);
         if (!r.success) {
-          Toast.error(r.error || 'login failed');
+          Toast.error(r.error || 'Đăng nhập thất bại');
           return;
         }
-        Api.setToken(tok);
-        Toast.success('Đăng nhập OK');
+        Api.setToken(r.data.token);
+        Toast.success('Đăng nhập thành công');
         setTimeout(() => location.href = '/lines.html', 400);
       } catch (err) {
         Toast.error('Lỗi: ' + err.message);

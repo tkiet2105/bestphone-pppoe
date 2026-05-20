@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Cài đặt — bestphone-pppoe</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <main>
+    <div class="card">
+      <h2>Thông tin tài khoản</h2>
+      <table style="max-width:520px">
+        <tr><th style="width:200px">Tên đăng nhập</th><td class="mono" id="me-username">—</td></tr>
+        <tr><th>Mã tài khoản (id)</th><td class="mono" id="me-id">—</td></tr>
+        <tr><th>Tạo lúc</th><td class="mono" id="me-created">—</td></tr>
+        <tr><th>Đổi mật khẩu lần cuối</th><td class="mono" id="me-updated">—</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Đổi mật khẩu</h2>
+      <div style="max-width:480px">
+        <div class="form-row">
+          <label>Mật khẩu hiện tại</label>
+          <input type="password" id="cp-current" autocomplete="current-password">
+        </div>
+        <div class="form-row">
+          <label>Mật khẩu mới (tối thiểu 6 ký tự)</label>
+          <input type="password" id="cp-new" autocomplete="new-password">
+        </div>
+        <div class="form-row">
+          <label>Nhập lại mật khẩu mới</label>
+          <input type="password" id="cp-new2" autocomplete="new-password">
+        </div>
+        <div class="muted small" style="margin:8px 0 12px">
+          Khi đổi mật khẩu thành công, tất cả phiên đăng nhập khác sẽ bị thoát.
+          Phiên hiện tại vẫn giữ nguyên.
+        </div>
+        <div class="actions">
+          <button onclick="submitChangePass()">Đổi mật khẩu</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>API token <span class="muted small">(dùng cho automation/script, không dùng để đăng nhập UI)</span></h2>
+      <table id="api-tokens-table">
+        <thead><tr>
+          <th style="width:60px">ID</th>
+          <th>Nhãn</th>
+          <th>4 ký tự cuối</th>
+          <th>Tạo lúc</th>
+          <th class="actions">Hành động</th>
+        </tr></thead>
+        <tbody><tr><td colspan="5" class="muted">(đang tải...)</td></tr></tbody>
+      </table>
+      <div style="margin-top:12px">
+        <h4 style="margin:0 0 8px;font-size:14px">Tạo API token mới</h4>
+        <div class="row" style="gap:8px">
+          <input id="tk-label" placeholder="nhãn (vd: script-backup)" style="max-width:260px">
+          <button onclick="createApiToken()">Tạo</button>
+        </div>
+        <div class="muted small" style="margin-top:8px">
+          Sau khi tạo, token đầy đủ chỉ được hiển thị <b>1 lần duy nhất</b>. Lưu lại ngay vào nơi an toàn.
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/js/api-client.js"></script>
+  <script src="/js/settings.js"></script>
+</body>
+</html>

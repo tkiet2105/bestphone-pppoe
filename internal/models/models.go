@@ -60,7 +60,18 @@ type Token struct {
 	Id        uint      `gorm:"primaryKey" json:"id"`
 	Token     string    `gorm:"size:128;uniqueIndex;not null" json:"-"`
 	Label     string    `gorm:"size:64" json:"label"`
+	UserId    *uint     `gorm:"index" json:"user_id,omitempty"` // NULL = API token, !NULL = login session
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// User — tài khoản đăng nhập UI (username + bcrypt password). Mỗi user có thể
+// có nhiều Token (session đăng nhập + API token tự sinh).
+type User struct {
+	Id           uint      `gorm:"primaryKey" json:"id"`
+	Username     string    `gorm:"size:64;uniqueIndex;not null" json:"username"`
+	PasswordHash string    `gorm:"size:128;not null" json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // Access rule constants

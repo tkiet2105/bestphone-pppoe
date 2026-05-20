@@ -12,7 +12,9 @@ type Config struct {
 	DBPath         string // default /var/lib/bestphone-pppoe/data.db
 	ProxyPortMin   int    // default 30000
 	ProxyPortMax   int    // default 40000
-	AdminToken     string // seed token (insert nếu DB rỗng)
+	AdminToken     string // seed API token (insert nếu DB rỗng) — env ADMIN_TOKEN
+	AdminUsername  string // seed admin user — env ADMIN_USERNAME (default "admin")
+	AdminPassword  string // seed admin password — env ADMIN_PASSWORD (default "bestphone")
 	DialConcurrent int    // global cap dial pppoe đồng thời
 	RotateNewIP    bool   // BESTPHONE_PPPOE_ROTATE_REQUIRE_NEW_IP=1
 }
@@ -24,6 +26,8 @@ func Load() *Config {
 		ProxyPortMin:   envInt("PROXY_PORT_MIN", 30000),
 		ProxyPortMax:   envInt("PROXY_PORT_MAX", 40000),
 		AdminToken:     strings.TrimSpace(os.Getenv("ADMIN_TOKEN")),
+		AdminUsername:  strings.TrimSpace(os.Getenv("ADMIN_USERNAME")),
+		AdminPassword:  os.Getenv("ADMIN_PASSWORD"), // KHÔNG trim — pass có thể chứa space
 		DialConcurrent: envInt("DIAL_CONCURRENT", 5),
 		RotateNewIP:    os.Getenv("BESTPHONE_PPPOE_ROTATE_REQUIRE_NEW_IP") == "1",
 	}

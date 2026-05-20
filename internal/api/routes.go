@@ -13,6 +13,10 @@ func RegisterRoutes(r *gin.Engine) {
 	// protected
 	g := r.Group("/api/v1", BearerAuth())
 	{
+		g.GET("/auth/me", AuthMe)
+		g.POST("/auth/logout", AuthLogout)
+		g.POST("/auth/change-password", ChangePassword)
+
 		g.GET("/events", EventsSSE)
 		g.GET("/ifaces", ListIfaces)
 		g.POST("/ifaces/probe", ProbeIfaces)

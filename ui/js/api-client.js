@@ -32,12 +32,16 @@ const Api = (() => {
   return {
     getToken, setToken, clearToken,
 
-    // auth
-    login: (token) => fetch(BASE + '/auth/login', {
+    // auth — user/password
+    login: (username, password) => fetch(BASE + '/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
+      body: JSON.stringify({ username, password }),
     }).then(r => r.json()),
+    me: () => _req('GET', '/auth/me'),
+    logout: () => _req('POST', '/auth/logout'),
+    changePassword: (current_password, new_password) =>
+      _req('POST', '/auth/change-password', { current_password, new_password }),
 
     // health
     health: () => fetch(BASE + '/health').then(r => r.json()),
@@ -139,7 +143,9 @@ function ensureAuth() {
   return true;
 }
 
-function logout() {
+async function logout() {
+  // Cố gắng invalidate session phía server; nếu lỗi vẫn clear local
+  try { await Api.logout(); } catch (_) {}
   Api.clearToken();
   location.href = '/';
 }
@@ -149,19 +155,28 @@ function renderNav(active) {
     <header>
       <h1>bestphone-pppoe</h1>
       <nav>
-        <a href="/lines.html" class="${active==='lines'?'active':''}">Lines</a>
-        <a href="/sessions.html" class="${active==='sessions'?'active':''}">Sessions</a>
-        <a href="/rules.html" class="${active==='rules'?'active':''}">Rules</a>
-        <a href="/export.html" class="${active==='export'?'active':''}">Export</a>
-        <a href="/logs.html" class="${active==='logs'?'active':''}">Logs</a>
+        <a href="/lines.html" class="${active==='lines'?'active':''}">Đường truyền</a>
+        <a href="/sessions.html" class="${active==='sessions'?'active':''}">Phiên</a>
+        <a href="/rules.html" class="${active==='rules'?'active':''}">Luật chặn</a>
+        <a href="/export.html" class="${active==='export'?'active':''}">Xuất proxy</a>
+        <a href="/logs.html" class="${active==='logs'?'active':''}">Nhật ký</a>
         <a href="/api.html" class="${active==='api'?'active':''}">API</a>
+        <a href="/settings.html" class="${active==='settings'?'active':''}">Cài đặt</a>
       </nav>
       <span class="spacer"></span>
+      <span class="muted small" id="conn-user"></span>
       <span class="muted small" id="conn-status">●</span>
-      <button onclick="logout()">Logout</button>
+      <button class="secondary" onclick="logout()">Đăng xuất</button>
     </header>
   `;
   document.body.insertAdjacentHTML('afterbegin', html);
+  // Lazy fetch user info
+  Api.me().then(u => {
+    const el = document.getElementById('conn-user');
+    if (!el) return;
+    if (u.is_api_token) el.textContent = '🔑 API token';
+    else el.textContent = '👤 ' + u.username;
+  }).catch(() => {});
 }
 
 function escapeHTML(s) {

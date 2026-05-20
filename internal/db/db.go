@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
@@ -30,7 +31,7 @@ func Init(dbPath string) error {
 	sqlDB, _ := g.DB()
 	sqlDB.SetMaxOpenConns(1) // SQLite không thích nhiều writer
 	DB = g
-	if err := DB.AutoMigrate(&models.Line{}, &models.Session{}, &models.Proxy{}, &models.ProxyCredential{}, &models.Token{}, &models.AccessRule{}); err != nil {
+	if err := DB.AutoMigrate(&models.Line{}, &models.Session{}, &models.Proxy{}, &models.ProxyCredential{}, &models.Token{}, &models.AccessRule{}, &models.User{}); err != nil {
 		return fmt.Errorf("automigrate: %w", err)
 	}
 	// Backfill 1-shot: nếu có column legacy isp_username/isp_password (từ v1.2.x),
@@ -45,13 +46,14 @@ func Init(dbPath string) error {
 	return nil
 }
 
-// SeedAdminToken — nếu DB chưa có token nào, insert token từ env ADMIN_TOKEN.
+// SeedAdminToken — nếu DB chưa có API token nào, insert token từ env ADMIN_TOKEN.
+// Chỉ đếm token user_id IS NULL (API token) để không nhầm với session đăng nhập.
 func SeedAdminToken(adminToken string) error {
 	if adminToken == "" {
 		return nil
 	}
 	var count int64
-	DB.Model(&models.Token{}).Count(&count)
+	DB.Model(&models.Token{}).Where("user_id IS NULL").Count(&count)
 	if count > 0 {
 		return nil
 	}
@@ -59,6 +61,46 @@ func SeedAdminToken(adminToken string) error {
 	if err := DB.Create(&t).Error; err != nil {
 		return err
 	}
-	log.Printf("[db] seeded admin-default token (id=%d)", t.Id)
+	log.Printf("[db] seeded admin-default API token (id=%d)", t.Id)
+	return nil
+}
+
+// SeedAdminUser — nếu DB chưa có user nào, tạo admin mặc định.
+// Username/password lấy từ env ADMIN_USERNAME / ADMIN_PASSWORD; nếu env trống dùng
+// "admin" / "bestphone" — log cảnh báo và khuyến khích đổi pass ngay.
+func SeedAdminUser(envUser, envPass string) error {
+	var count int64
+	DB.Model(&models.User{}).Count(&count)
+	if count > 0 {
+		return nil
+	}
+	username := envUser
+	if username == "" {
+		username = "admin"
+	}
+	password := envPass
+	usedDefault := false
+	if password == "" {
+		password = "bestphone"
+		usedDefault = true
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("bcrypt: %w", err)
+	}
+	u := models.User{
+		Username:     username,
+		PasswordHash: string(hash),
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+	if err := DB.Create(&u).Error; err != nil {
+		return err
+	}
+	if usedDefault {
+		log.Printf("[db] ⚠ seeded admin user %q / %q — ĐỔI MẬT KHẨU NGAY tại trang Cài đặt", username, password)
+	} else {
+		log.Printf("[db] seeded admin user %q from env (id=%d)", username, u.Id)
+	}
 	return nil
 }

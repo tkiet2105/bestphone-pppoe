@@ -2,13 +2,42 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
-  <title>Logs — bestphone-pppoe</title>
+  <title>Nhật ký — bestphone-pppoe</title>
   <link rel="stylesheet" href="/css/app.css">
   <style>
     .log-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
-    .log-toolbar select, .log-toolbar input[type=number], .log-toolbar input[type=text] { max-width: 200px; }
-    .log-toolbar input[type=text] { max-width: 320px; }
+    .log-toolbar select, .log-toolbar input[type=number], .log-toolbar input[type=text] { max-width: 220px; }
+    .log-toolbar input[type=text] { max-width: 280px; }
     .log-toolbar label.inline { display: flex; align-items: center; gap: 4px; font-size: 12px; color: #94a3b8; }
+
+    /* Chế độ ĐƠN GIẢN — danh sách sự kiện đẹp, dễ đọc */
+    .events-list { font-family: 'SF Mono', Monaco, monospace; font-size: 12.5px; line-height: 1.55; }
+    .ev-row {
+      padding: 6px 10px;
+      border-bottom: 1px solid #1e293b;
+      display: grid;
+      grid-template-columns: 110px 64px 1fr;
+      gap: 10px;
+      align-items: baseline;
+    }
+    .ev-row:hover { background: #0f172a; }
+    .ev-time { color: #94a3b8; font-size: 11.5px; white-space: nowrap; }
+    .ev-tag {
+      display: inline-block; padding: 1px 6px; border-radius: 4px;
+      font-size: 10.5px; font-weight: 700; text-align: center;
+      background: #334155; color: #e2e8f0;
+    }
+    .ev-msg { color: #e2e8f0; }
+    .ev-msg b { color: #f1f5f9; }
+    .ev-pp { color: #93c5fd; font-weight: 600; }
+    .ev-tag.ok    { background: #16a34a; color: #fff; }
+    .ev-tag.err   { background: #dc2626; color: #fff; }
+    .ev-tag.warn  { background: #f59e0b; color: #fff; }
+    .ev-tag.info  { background: #475569; }
+    .ev-tag.net   { background: #2563eb; color: #fff; }
+    .ev-tag.dial  { background: #7c3aed; color: #fff; }
+
+    /* Chế độ THÔ — tail raw journalctl */
     pre#log-view {
       background: #020617; border: 1px solid #1e293b; border-radius: 6px;
       padding: 12px 14px; font-family: 'SF Mono', Monaco, monospace;
@@ -19,48 +48,73 @@
     pre#log-view .l-auth-ack { color: #86efac; font-weight: bold; }
     pre#log-view .l-auth-nak { color: #fbbf24; font-weight: bold; }
     pre#log-view .l-pad { color: #93c5fd; }
+
     .log-stat {
       display: inline-block; padding: 2px 8px; border-radius: 4px;
       background: #1e293b; color: #cbd5e1; font-size: 11px;
       margin-right: 6px;
     }
+    .legend-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 8px 16px; margin-top: 10px;
+    }
+    .legend-grid div { font-size: 12px; color: #cbd5e1; }
   </style>
 </head>
 <body>
   <main>
     <div class="card">
-      <h2>System Logs</h2>
+      <h2>Nhật ký hệ thống</h2>
       <div class="log-toolbar">
+        <label class="inline" style="font-size:12.5px;color:#cbd5e1">Chế độ hiển thị:</label>
+        <select id="lg-mode">
+          <option value="simple" selected>Đơn giản (dịch sự kiện ra tiếng Việt)</option>
+          <option value="raw">Chi tiết (nguyên văn từ pppd/backend)</option>
+        </select>
+
         <select id="lg-source">
           <option value="all">Tất cả (backend + pppd)</option>
-          <option value="backend">bestphone-pppoe (backend)</option>
-          <option value="pppd" selected>pppd (PPPoE dial)</option>
+          <option value="backend">Backend (bestphone-pppoe)</option>
+          <option value="pppd" selected>Chỉ pppd (quay số PPPoE)</option>
         </select>
         <select id="lg-since">
-          <option value="5 minutes ago">5 phút trước</option>
-          <option value="15 minutes ago" selected>15 phút</option>
-          <option value="1 hour ago">1 giờ</option>
-          <option value="6 hours ago">6 giờ</option>
-          <option value="24 hours ago">24 giờ</option>
+          <option value="5 minutes ago">5 phút gần đây</option>
+          <option value="15 minutes ago" selected>15 phút gần đây</option>
+          <option value="1 hour ago">1 giờ gần đây</option>
+          <option value="6 hours ago">6 giờ gần đây</option>
+          <option value="24 hours ago">24 giờ gần đây</option>
         </select>
-        <input type="number" id="lg-lines" value="300" min="10" max="2000" title="Số dòng cuối">
-        <input type="text" id="lg-filter" placeholder="filter keyword (vd: AuthNak, PADO, fbr00chgt...)">
-        <button onclick="refresh()">Refresh</button>
-        <label class="inline"><input type="checkbox" id="lg-auto"> Auto 5s</label>
-        <label class="inline"><input type="checkbox" id="lg-bottom" checked> Auto scroll cuối</label>
-        <button class="secondary" onclick="copyLog()">Copy</button>
+        <input type="number" id="lg-lines" value="300" min="10" max="2000" title="Số dòng nhật ký cuối cùng">
+        <input type="text" id="lg-filter" placeholder="Tìm từ khóa (VD: tên đăng nhập, ppp0, ...)">
+        <button onclick="refresh()">Tải lại</button>
+        <label class="inline"><input type="checkbox" id="lg-auto"> Tự động làm mới mỗi 5 giây</label>
+        <label class="inline"><input type="checkbox" id="lg-bottom" checked> Tự cuộn xuống cuối</label>
+        <button class="secondary" onclick="copyLog()">Sao chép</button>
         <span class="spacer" style="flex:1"></span>
         <span id="lg-stats"></span>
       </div>
-      <pre id="log-view">(chưa load)</pre>
+
+      <!-- Chế độ ĐƠN GIẢN -->
+      <div id="events-wrap" style="background:#020617;border:1px solid #1e293b;border-radius:6px;max-height:72vh;overflow-y:auto">
+        <div id="events-list" class="events-list">(đang tải...)</div>
+      </div>
+
+      <!-- Chế độ THÔ -->
+      <pre id="log-view" style="display:none">(đang tải...)</pre>
 
       <div class="muted small" style="margin-top:10px;line-height:1.6">
-        <strong>Quick filter examples</strong>:<br>
-        • <span class="mono">AuthAck</span> = cred khớp BRAS, dial thành công.<br>
-        • <span class="mono">AuthNak</span> = cred bị ISP từ chối (random/sai cred).<br>
-        • <span class="mono">PADO</span> = BRAS trả PADO khi nhận PADI từ NIC (network layer OK).<br>
-        • <span class="mono">no PADO</span> hay <span class="mono">timeout</span> = cáp chưa cắm hoặc sai port.<br>
-        • <span class="mono">ppp&lt;N&gt;</span> = interface allocate cho session đó.
+        <strong>Diễn giải các sự kiện thường gặp</strong> (chế độ đơn giản dịch tự động):
+        <div class="legend-grid">
+          <div>🔍 <b>Đang tìm máy chủ ISP</b> — pppd phát tín hiệu thăm dò (PADI) ra cổng mạng để gọi BRAS.</div>
+          <div>📡 <b>Máy chủ ISP phản hồi</b> — BRAS đã nghe thấy (PADO) → dây ISP đã đúng cổng.</div>
+          <div>🤝 <b>Yêu cầu kết nối / Chấp nhận kết nối</b> — bắt tay PADR/PADS xong, chuẩn bị đăng nhập.</div>
+          <div>🔑 <b>Gửi tên đăng nhập + mật khẩu</b> — pppd đang xác thực PAP/CHAP với ISP.</div>
+          <div>✅ <b>Đăng nhập thành công</b> — ISP chấp nhận, sắp được cấp IP.</div>
+          <div>❌ <b>Sai tên đăng nhập hoặc mật khẩu</b> — ISP từ chối; KHÔNG được thử lại liên tục (khóa tài khoản).</div>
+          <div>🌐 <b>Đã nhận IP công cộng</b> — kết nối hoàn tất, có thể dùng proxy.</div>
+          <div>⏱ <b>Không thấy máy chủ ISP phản hồi</b> — dây ISP cắm sai cổng hoặc rớt link.</div>
+          <div>🔌 <b>Ngắt kết nối</b> — tunnel PPPoE đóng (do người dùng "Đổi IP" hoặc lỗi).</div>
+        </div>
       </div>
     </div>
   </main>
