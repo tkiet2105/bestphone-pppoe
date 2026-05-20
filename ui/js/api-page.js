@@ -150,37 +150,93 @@ function render() {
       <span>${escapeHTML(g.group)}</span><span class="count">${g.items.length}</span>
     </a>
   `).join('');
+}
 
-  // Smooth scroll
-  side.querySelectorAll('a').forEach(a => {
+// scrollspy: highlight nhóm đang hiển thị + click handler.
+// Bí kíp 2 trường hợp biên hay miss:
+//   1. Cuộn tới đáy trang nhưng section cuối (SSE) không bao giờ vượt qua mốc
+//      `scrollY + 100` vì section ngắn → bottom-of-page detect riêng.
+//   2. Click sidebar link cho section cuối: smooth-scroll kẹt ở đáy chưa kịp
+//      kích hoạt scroll listener → tự set active ngay khi click.
+function setupScrollSpy() {
+  const sideLinks = [...document.querySelectorAll('#api-side a')];
+  const sections = SPEC.map(g => document.getElementById(groupId(g.group))).filter(Boolean);
+  if (!sideLinks.length || !sections.length) return;
+
+  function setActive(sectionId) {
+    sideLinks.forEach(a => a.classList.toggle('active', a.dataset.side === sectionId));
+  }
+
+  function update() {
+    // Bottom-of-page: nếu gần đáy, ép active = section cuối (xử lý các section
+    // ngắn ở cuối không vượt qua mốc scrollY+100, vd Token API / SSE).
+    const docH = document.documentElement.scrollHeight;
+    if (window.innerHeight + window.scrollY >= docH - 8) {
+      // Lấy section cuối CÒN VISIBLE (filter có thể ẩn nhóm)
+      for (let i = sections.length - 1; i >= 0; i--) {
+        if (sections[i].style.display !== 'none') { setActive(sections[i].id); return; }
+      }
+      return;
+    }
+    const y = window.scrollY + 100;
+    let active = null;
+    for (const s of sections) {
+      if (s.style.display === 'none') continue;
+      if (s.offsetTop <= y) active = s;
+      else break;
+    }
+    if (!active) {
+      // Trên cùng — highlight section đầu visible
+      active = sections.find(s => s.style.display !== 'none');
+    }
+    if (active) setActive(active.id);
+  }
+
+  // Click handler — set active NGAY (không chờ scroll listener)
+  sideLinks.forEach(a => {
     a.addEventListener('click', (e) => {
       e.preventDefault();
       const id = a.dataset.side;
       const el = document.getElementById(id);
-      if (el) {
-        window.scrollTo({ top: el.offsetTop - 64, behavior: 'smooth' });
-        history.replaceState(null, '', '#' + id);
-      }
+      if (!el) return;
+      const top = el.offsetTop - 64;
+      window.scrollTo({ top, behavior: 'smooth' });
+      history.replaceState(null, '', '#' + id);
+      setActive(id);
+      // Lock active 600ms để smooth-scroll không bị scrollspy đè lại
+      const locked = id;
+      const releaseAt = Date.now() + 600;
+      const origUpdate = update;
+      window.removeEventListener('scroll', _spyHandler, { passive: true });
+      _spyHandler = () => {
+        if (Date.now() < releaseAt) { setActive(locked); return; }
+        origUpdate();
+      };
+      window.addEventListener('scroll', _spyHandler, { passive: true });
+      // Sau timeout, chuyển về handler gốc
+      setTimeout(() => {
+        window.removeEventListener('scroll', _spyHandler, { passive: true });
+        _spyHandler = origUpdate;
+        window.addEventListener('scroll', _spyHandler, { passive: true });
+      }, 700);
     });
   });
-}
 
-// scrollspy: highlight nhóm đang hiển thị
-function setupScrollSpy() {
-  const sideLinks = [...document.querySelectorAll('#api-side a')];
-  const sections = SPEC.map(g => document.getElementById(groupId(g.group)));
-  function update() {
-    const y = window.scrollY + 100;
-    let active = sections[0];
-    for (const s of sections) {
-      if (!s) continue;
-      if (s.offsetTop <= y) active = s;
-      else break;
-    }
-    sideLinks.forEach(a => a.classList.toggle('active', a.dataset.side === active.id));
-  }
-  window.addEventListener('scroll', update, { passive: true });
+  let _spyHandler = update;
+  window.addEventListener('scroll', _spyHandler, { passive: true });
+  window.addEventListener('resize', update);
   update();
+
+  // Nếu URL có hash (vd #grp-Token_API_cho_automation_), scroll tới ngay
+  if (location.hash) {
+    const target = document.getElementById(location.hash.slice(1));
+    if (target) {
+      setTimeout(() => {
+        window.scrollTo({ top: target.offsetTop - 64, behavior: 'instant' });
+        setActive(target.id);
+      }, 50);
+    }
+  }
 }
 
 function renderRow(group, it, idx) {
