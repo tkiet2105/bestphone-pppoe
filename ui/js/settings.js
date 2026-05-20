@@ -70,7 +70,7 @@ async function loadApiTokens() {
       <td class="mono">…${escapeHTML(t.last4)}</td>
       <td class="mono small">${fmtTime(t.created_at)}</td>
       <td class="actions">
-        <button class="small danger" onclick="deleteApiToken(${t.id})">Xóa</button>
+        <button class="small danger" onclick="deleteApiToken(${t.id})">✕ Xóa</button>
       </td>
     </tr>`).join('');
   } catch (e) { Toast.error(e.message); }

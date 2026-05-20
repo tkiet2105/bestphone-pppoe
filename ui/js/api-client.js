@@ -131,7 +131,10 @@ const Dialog = (() => {
   let zCounter = 1000;
 
   function escape(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-  function nl2br(s) { return escape(s).replace(/\n/g, '<br>'); }
+  // nl2br — message của Dialog được coi là HTML (caller có quyền dùng <b>, <i>,
+  // span, v.v.). Caller TỰ chịu trách nhiệm escape dynamic content qua escapeHTML.
+  // Chỉ replace \n → <br> để giữ wrap dòng tự nhiên.
+  function nl2br(s) { return String(s ?? '').replace(/\n/g, '<br>'); }
 
   function show({ title, bodyHTML, actions, dismissValue, onMount, autofocusSel }) {
     return new Promise(resolve => {
@@ -344,7 +347,7 @@ function renderNav(active) {
       <span class="spacer"></span>
       <span class="muted small" id="conn-user"></span>
       <span class="muted small" id="conn-status">●</span>
-      <button class="secondary" onclick="logout()">Đăng xuất</button>
+      <button class="secondary" onclick="logout()" title="Đăng xuất">⎋ Đăng xuất</button>
     </header>
   `;
   document.body.insertAdjacentHTML('afterbegin', html);
@@ -380,8 +383,18 @@ async function copyText(text) {
   return ok;
 }
 
+// statusBadge — icon + nhãn Việt cho trạng thái phiên/proxy.
+const STATUS_LABEL = {
+  connected:    { icon: '✓',  text: 'Đã kết nối' },
+  dialing:      { icon: '⟳',  text: 'Đang quay số' },
+  error:        { icon: '⚠',  text: 'Lỗi' },
+  disconnected: { icon: '○',  text: 'Đã ngắt' },
+  running:      { icon: '▶',  text: 'Đang chạy' },
+  stopped:      { icon: '■',  text: 'Đã dừng' },
+};
 function statusBadge(s) {
-  return `<span class="badge ${escapeHTML(s)}">${escapeHTML(s)}</span>`;
+  const m = STATUS_LABEL[s] || { icon: '·', text: s };
+  return `<span class="badge ${escapeHTML(s)}"><span class="badge-icon">${m.icon}</span>${escapeHTML(m.text)}</span>`;
 }
 
 // ─── Button UX: ripple + async disable ───

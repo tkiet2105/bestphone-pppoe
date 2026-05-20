@@ -11,8 +11,8 @@
     <div class="card" id="nic-panel">
       <div class="row" style="margin-bottom:8px">
         <h2 style="margin:0;flex:1">Cổng mạng vật lý</h2>
-        <button class="secondary" onclick="loadNics()">Tải lại</button>
-        <button onclick="probeNics()" id="probe-btn">Quét cổng có ISP</button>
+        <button class="secondary" onclick="loadNics()">↻ Tải lại</button>
+        <button onclick="probeNics()" id="probe-btn">🔍 Quét cổng có ISP</button>
       </div>
       <div id="nic-list" class="muted">(đang tải...)</div>
       <div class="muted small" style="margin-top:8px">
@@ -32,9 +32,9 @@
           <option value="error">Lỗi</option>
           <option value="disconnected">Đã ngắt</option>
         </select>
-        <button onclick="loadSessions()">Tải lại</button>
-        <button onclick="openCreateSession()">+ Tạo session</button>
-        <button class="secondary" onclick="showExport()">Sao chép proxy</button>
+        <button onclick="loadSessions()">↻ Tải lại</button>
+        <button onclick="openCreateSession()">⊕ Tạo session</button>
+        <button class="secondary" onclick="showExport()">⎘ Copy proxy</button>
       </div>
       <table id="sessions-table">
         <thead><tr>

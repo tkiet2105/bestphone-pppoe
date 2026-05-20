@@ -62,8 +62,8 @@ function renderRows(rs) {
       <td class="mono">${escapeHTML(r.value)}</td>
       <td class="muted small">${escapeHTML(r.note || '')}</td>
       <td class="actions">
-        <button class="small secondary" onclick="toggleAction(${r.id}, '${r.action}')">Đổi hành động</button>
-        <button class="small danger" onclick="deleteRule(${r.id}, '${r.scope}')">Xóa</button>
+        <button class="small secondary" onclick="toggleAction(${r.id}, '${r.action}')" title="Đảo Cho phép ↔ Chặn">⇄ Đổi</button>
+        <button class="small danger" onclick="deleteRule(${r.id}, '${r.scope}')" title="Xóa rule">✕ Xóa</button>
       </td>
     </tr>`).join('');
 }

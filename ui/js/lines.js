@@ -138,14 +138,14 @@ async function loadLines() {
         <td>${r.max_sessions}</td>
         <td>${r.session_count}</td>
         <td class="actions">
-          <a href="/sessions.html?line=${r.id}">Session</a>
+          <a href="/sessions.html?line=${r.id}" title="Xem các session của đường truyền này">📡 Session</a>
           &nbsp;|&nbsp;
-          <a href="#" onclick="event.preventDefault();editLine(${r.id})">Sửa</a>
+          <a href="#" onclick="event.preventDefault();editLine(${r.id})" title="Sửa tài khoản ISP">✎ Sửa</a>
           &nbsp;|&nbsp;
-          <a href="#" onclick="event.preventDefault();deleteLine(${r.id},'${escapeHTML(r.name)}')">Xóa</a>
+          <a href="#" onclick="event.preventDefault();deleteLine(${r.id},'${escapeHTML(r.name)}')" title="Xóa đường truyền" style="color:#fca5a5">✕ Xóa</a>
         </td>
       </tr>
-    `).join('') || '<tr><td colspan="8" class="muted">Chưa có đường truyền nào. Bấm "+ Tạo đường truyền mới" để bắt đầu.</td></tr>';
+    `).join('') || '<tr><td colspan="8" class="muted">Chưa có đường truyền nào. Bấm "⊕ Tạo đường truyền mới" để bắt đầu.</td></tr>';
   } catch (e) {
     Toast.error('Lỗi tải danh sách: ' + e.message);
   }

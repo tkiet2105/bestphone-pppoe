@@ -134,10 +134,13 @@ function renderSessions() {
       <td>${s.creds_count} <a href="#" onclick="event.preventDefault();openCreds(${s.id},${s.proxy_id})">sửa</a></td>
       <td>${errCell}</td>
       <td class="actions">
-        <button class="small" onclick="rotateSession(${s.id})">Đổi IP</button>
-        <button class="small secondary" onclick="toggleEnabled(${s.id},'${s.proxy_status}')">${s.proxy_status === 'running' ? 'Tắt' : 'Bật'}</button>
-        <button class="small secondary" onclick="openSessionRules(${s.id})">Rule</button>
-        <button class="small danger" onclick="deleteSession(${s.id})">Xóa</button>
+        <label class="switch" title="${s.proxy_status === 'running' ? 'Đang chạy — click để tắt' : 'Đã dừng — click để bật'}">
+          <input type="checkbox" ${s.proxy_status === 'running' ? 'checked' : ''} onchange="toggleProxySwitch(${s.id}, this)">
+          <span class="slider"></span>
+        </label>
+        <button class="small" onclick="rotateSession(${s.id})" title="Đổi IP công cộng">↻ Đổi IP</button>
+        <button class="small secondary" onclick="openSessionRules(${s.id})" title="Quản lý rule cho phiên này">🛡 Rule</button>
+        <button class="small danger" onclick="deleteSession(${s.id})" title="Xóa phiên">✕ Xóa</button>
       </td>
     </tr>`;
   }).join('');
@@ -505,6 +508,23 @@ async function toggleEnabled(id, currentStatus) {
   } catch (e) { Toast.error(e.message); }
 }
 
+// toggleProxySwitch — handler cho UI switch (checkbox). Đọc trạng thái mới từ
+// .checked, rollback nếu API fail (giữ UI khớp server).
+async function toggleProxySwitch(id, inputEl) {
+  const enabled = inputEl.checked;
+  inputEl.disabled = true;
+  try {
+    await Api.setSessionEnabled(id, enabled);
+    Toast.success(enabled ? 'Đã bật proxy' : 'Đã tắt proxy');
+    loadSessions();
+  } catch (e) {
+    inputEl.checked = !enabled; // rollback
+    Toast.error('Lỗi: ' + e.message);
+  } finally {
+    inputEl.disabled = false;
+  }
+}
+
 async function deleteSession(id) {
   const ok = await Dialog.confirm(
     `Xóa phiên <b>#${id}</b>?\n\nHành động không thể hoàn tác.`,
@@ -663,7 +683,7 @@ async function loadSessionRulesList() {
       <td>${r.kind === 'domain' ? 'Tên miền (đích)' : 'IP nguồn (client)'}</td>
       <td class="mono">${escapeHTML(r.value)}</td>
       <td class="muted small">${escapeHTML(r.note || '')}</td>
-      <td><button class="small danger" onclick="deleteSessionRule(${r.id})">Xóa</button></td>
+      <td><button class="small danger" onclick="deleteSessionRule(${r.id})" title="Xóa rule này">✕ Xóa</button></td>
     </tr>`).join('');
   } catch (e) { Toast.error('Lỗi tải rule: ' + e.message); }
 }
@@ -732,7 +752,7 @@ async function loadCreds() {
       <td class="mono">${escapeHTML(r.username)}</td>
       <td class="mono">${escapeHTML(r.password)}</td>
       <td><input type="checkbox" ${r.enabled?'checked':''} onchange="toggleCred(${r.id},this.checked)"></td>
-      <td><button class="small danger" onclick="delCred(${r.id})">Xóa</button></td>
+      <td><button class="small danger" onclick="delCred(${r.id})" title="Xóa tài khoản">✕ Xóa</button></td>
     </tr>`).join('') || '<tr><td colspan="6" class="muted">(chưa có tài khoản — proxy đang mở, không cần đăng nhập)</td></tr>';
   } catch (e) { Toast.error(e.message); }
 }
