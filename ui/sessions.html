@@ -40,7 +40,7 @@
         <thead><tr>
           <th class="cb-cell"><input type="checkbox" class="head-check" onchange="toggleSelectAll(this.checked)" title="Chọn tất cả"></th>
           <th>#</th><th>Line</th><th>ppp</th><th>Cổng PPP</th><th>Tên đăng nhập</th>
-          <th>Trạng thái</th><th>IP công cộng</th><th>Cổng proxy</th><th>Số tài khoản</th>
+          <th>Trạng thái</th><th>Public IP</th><th>Cổng proxy</th><th>Số tài khoản</th>
           <th>Lỗi</th>
           <th class="actions">Hành động</th>
         </tr></thead>
@@ -125,7 +125,7 @@
     <div class="modal" style="min-width:680px">
       <h3>Luật áp dụng cho phiên #<span id="sr-sid"></span> <span class="muted small" id="sr-sub"></span></h3>
       <p class="muted small" style="margin:-6px 0 10px">
-        Các luật bên dưới chỉ áp dụng cho phiên này. Luật chặn ưu tiên (deny-wins).
+        Các luật bên dưới chỉ áp dụng cho phiên này. Rules ưu tiên (deny-wins).
         Để áp dụng cho TẤT CẢ phiên, dùng trang <a href="/rules.html">Rules</a> (scope=global).
       </p>
       <table class="creds-table" id="sr-table">
@@ -167,7 +167,7 @@
     <div class="modal" style="min-width:640px">
       <h3>Sao chép danh sách proxy</h3>
       <div class="row" style="margin-bottom:12px">
-        <select id="ex-type"><option value="public">IP công cộng</option><option value="local">IP nội bộ</option></select>
+        <select id="ex-type"><option value="public">Public IP</option><option value="local">IP nội bộ</option></select>
         <button onclick="refreshExport()">Tải lại</button>
         <button class="secondary" onclick="copyExport()">Sao chép</button>
       </div>

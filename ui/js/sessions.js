@@ -316,14 +316,14 @@ function _showCtxMenu(x, y) {
     </div>
     <div class="ctx-sep"></div>
     <div class="ctx-item" data-act="copy-default-pub">
-      <span class="ctx-icon">⎘</span><span style="flex:1">Sao chép tài khoản <b>mặc định</b> (IP công cộng)</span>
+      <span class="ctx-icon">⎘</span><span style="flex:1">Sao chép tài khoản <b>mặc định</b> (Public IP)</span>
     </div>
     <div class="ctx-item" data-act="copy-default-local">
       <span class="ctx-icon">⎘</span><span style="flex:1">Sao chép tài khoản <b>mặc định</b> (IP nội bộ)</span>
     </div>
     <div class="ctx-sep"></div>
     <div class="ctx-item" data-act="copy-all-pub">
-      <span class="ctx-icon">⎘</span><span style="flex:1">Sao chép <b>TẤT CẢ</b> tài khoản (IP công cộng)</span>
+      <span class="ctx-icon">⎘</span><span style="flex:1">Sao chép <b>TẤT CẢ</b> tài khoản (Public IP)</span>
     </div>
     <div class="ctx-item" data-act="copy-all-local">
       <span class="ctx-icon">⎘</span><span style="flex:1">Sao chép <b>TẤT CẢ</b> tài khoản (IP nội bộ)</span>
@@ -414,7 +414,7 @@ async function copyCredsByType(type, sessionIds, defaultOnly) {
     const lines = filtered.flatMap(p => (p.creds || [])
       .filter(c => !defaultOnly || c.label === 'default')
       .map(c => `${p.ip}:${p.port}:${c.username}:${c.password}`));
-    const ipLabel = type === 'public' ? 'IP công cộng' : 'IP nội bộ';
+    const ipLabel = type === 'public' ? 'Public IP' : 'IP nội bộ';
     const credLabel = defaultOnly ? 'mặc định' : 'tất cả';
     if (!lines.length) { Toast.info(`Không có tài khoản nào để sao chép (${credLabel} · ${ipLabel})`); return; }
     const ok = await copyText(lines.join('\n'));

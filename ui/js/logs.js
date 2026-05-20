@@ -162,7 +162,7 @@ function parseLogLine(raw) {
 
     // IP layer / IPCP
     { re: /local\s+IP address\s+([\d.]+)/i,         tag: 'IP nội bộ',   klass: 'info', msgFn: m => `Đã nhận IP nội bộ trên đầu cuối: <b>${escapeHTML(m[1])}</b>` },
-    { re: /remote\s+IP address\s+([\d.]+)/i,        tag: 'IP công cộng',klass: 'ok',   msgFn: m => `IP công cộng do ISP cấp: <b>${escapeHTML(m[1])}</b>` },
+    { re: /remote\s+IP address\s+([\d.]+)/i,        tag: 'Public IP',klass: 'ok',   msgFn: m => `Public IP do ISP cấp: <b>${escapeHTML(m[1])}</b>` },
     { re: /primary\s+DNS address\s+([\d.]+)/i,      tag: 'DNS',         klass: 'info', msgFn: m => `DNS chính từ ISP: <b>${escapeHTML(m[1])}</b>` },
     { re: /secondary\s+DNS address\s+([\d.]+)/i,    tag: 'DNS',         klass: 'info', msgFn: m => `DNS phụ từ ISP: <b>${escapeHTML(m[1])}</b>` },
 
