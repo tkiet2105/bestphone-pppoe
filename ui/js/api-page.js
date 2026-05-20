@@ -103,15 +103,15 @@ const SPEC = [
   {
     group: 'Rules (cho phép / từ chối)',
     items: [
-      { method: 'GET', path: '/api/v1/rules', desc: 'Liệt kê luật. Tham số: scope=global|session, session_id, action=allow|deny, kind=domain|ip.' },
-      { method: 'POST', path: '/api/v1/rules', desc: 'Tạo luật. scope=global → áp dụng toàn cluster. scope=session → chỉ áp dụng cho phiên session_id đó.',
+      { method: 'GET', path: '/api/v1/rules', desc: 'Liệt kê rule. Tham số: scope=global|session, session_id, action=allow|deny, kind=domain|ip.' },
+      { method: 'POST', path: '/api/v1/rules', desc: 'Tạo rule. scope=global → áp dụng toàn cluster. scope=session → chỉ áp dụng cho phiên session_id đó.',
         body: '{ "scope":"global", "kind":"domain", "action":"deny", "value":"*.facebook.com", "note":"chặn mạng xã hội" }',
         resp: '{ "id":1, "scope":"global", "kind":"domain", "action":"deny", "value":"*.facebook.com" }' },
       { method: 'PUT', path: '/api/v1/rules/:id', desc: 'Cập nhật hành động/giá trị/ghi chú.',
         body: '{ "action":"allow" }' },
-      { method: 'DELETE', path: '/api/v1/rules/:id', desc: 'Xóa luật. Tự reload nóng — không tắt listener.' },
+      { method: 'DELETE', path: '/api/v1/rules/:id', desc: 'Xóa rule. Tự reload nóng — không tắt listener.' },
     ],
-    note: 'Chặn ưu tiên (Deny-wins). Listener cache luật theo từng proxy; mọi thay đổi tự reload nóng. Tên miền hỗ trợ *.suffix; IP hỗ trợ đơn lẻ hoặc dạng CIDR.',
+    note: 'Chặn ưu tiên (Deny-wins). Listener cache rule theo từng proxy; mọi thay đổi tự reload nóng. Tên miền hỗ trợ *.suffix; IP hỗ trợ đơn lẻ hoặc dạng CIDR.',
   },
   {
     group: 'Token API (cho automation)',

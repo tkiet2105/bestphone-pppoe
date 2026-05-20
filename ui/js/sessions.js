@@ -136,7 +136,7 @@ function renderSessions() {
       <td class="actions">
         <button class="small" onclick="rotateSession(${s.id})">Đổi IP</button>
         <button class="small secondary" onclick="toggleEnabled(${s.id},'${s.proxy_status}')">${s.proxy_status === 'running' ? 'Tắt' : 'Bật'}</button>
-        <button class="small secondary" onclick="openSessionRules(${s.id})">Luật</button>
+        <button class="small secondary" onclick="openSessionRules(${s.id})">Rule</button>
         <button class="small danger" onclick="deleteSession(${s.id})">Xóa</button>
       </td>
     </tr>`;
@@ -316,24 +316,24 @@ function _showCtxMenu(x, y) {
     </div>
     <div class="ctx-sep"></div>
     <div class="ctx-item" data-act="copy-default-pub">
-      <span class="ctx-icon">⎘</span><span style="flex:1">Sao chép tài khoản <b>mặc định</b> (Public IP)</span>
+      <span class="ctx-icon">⎘</span><span style="flex:1">Copy proxy <b>mặc định</b> (Public IP)</span>
     </div>
     <div class="ctx-item" data-act="copy-default-local">
-      <span class="ctx-icon">⎘</span><span style="flex:1">Sao chép tài khoản <b>mặc định</b> (IP nội bộ)</span>
+      <span class="ctx-icon">⎘</span><span style="flex:1">Copy proxy <b>mặc định</b> (IP nội bộ)</span>
     </div>
     <div class="ctx-sep"></div>
     <div class="ctx-item" data-act="copy-all-pub">
-      <span class="ctx-icon">⎘</span><span style="flex:1">Sao chép <b>TẤT CẢ</b> tài khoản (Public IP)</span>
+      <span class="ctx-icon">⎘</span><span style="flex:1">Copy <b>TẤT CẢ</b> proxy (Public IP)</span>
     </div>
     <div class="ctx-item" data-act="copy-all-local">
-      <span class="ctx-icon">⎘</span><span style="flex:1">Sao chép <b>TẤT CẢ</b> tài khoản (IP nội bộ)</span>
+      <span class="ctx-icon">⎘</span><span style="flex:1">Copy <b>TẤT CẢ</b> proxy (IP nội bộ)</span>
     </div>
     <div class="ctx-sep"></div>
     <div class="ctx-item" data-act="rule-add">
-      <span class="ctx-icon">⊕</span><span style="flex:1">Thêm luật cho ${n} session đã chọn…</span>
+      <span class="ctx-icon">⊕</span><span style="flex:1">Thêm rule cho ${n} session đã chọn…</span>
     </div>
     <div class="ctx-item" data-act="rule-clear">
-      <span class="ctx-icon">⊘</span><span style="flex:1">Xóa hết luật của ${n} session đã chọn</span>
+      <span class="ctx-icon">⊘</span><span style="flex:1">Xóa hết rule của ${n} session đã chọn</span>
     </div>
     <div class="ctx-sep"></div>
     <div class="ctx-item danger" data-act="delete">
@@ -531,9 +531,9 @@ async function bulkAddRule(sessionIds) {
   // Đọc giá trị input bằng cách bắt OK ngay trong onMount (vì DOM bị remove khi resolve).
   let formData = null;
   const result = await Dialog.show({
-    title: `Thêm luật áp dụng cho ${sessionIds.length} phiên`,
+    title: `Thêm rule áp dụng cho ${sessionIds.length} phiên`,
     bodyHTML: `
-      <div class="dlg-msg">Luật bên dưới sẽ được nhân ra <b>${sessionIds.length}</b> bản, mỗi bản gắn vào 1 phiên đã chọn.</div>
+      <div class="dlg-msg">Rule bên dưới sẽ được nhân ra <b>${sessionIds.length}</b> bản, mỗi bản gắn vào 1 phiên đã chọn.</div>
       <div style="display:grid;grid-template-columns:120px 1fr;gap:8px;margin-top:12px;align-items:center">
         <label class="muted small">Hành động</label>
         <select id="bra-action">
@@ -552,7 +552,7 @@ async function bulkAddRule(sessionIds) {
       </div>`,
     actions: [
       { label: 'Hủy', kind: 'secondary', value: '__cancel__' },
-      { label: 'Thêm luật', kind: 'primary', value: '__ok__' },
+      { label: 'Thêm rule', kind: 'primary', value: '__ok__' },
     ],
     dismissValue: '__cancel__',
     autofocusSel: '#bra-value',
@@ -580,7 +580,7 @@ async function bulkAddRule(sessionIds) {
   if (result !== '__ok__' || !formData) return;
   if (!formData.value) { Toast.error('Ô "Giá trị" không được để trống'); return; }
 
-  Toast.info(`Đang thêm luật cho ${sessionIds.length} phiên...`);
+  Toast.info(`Đang thêm rule cho ${sessionIds.length} phiên...`);
   const results = await Promise.allSettled(sessionIds.map(sid => Api.createRule({
     scope: 'session',
     session_id: sid,
@@ -595,12 +595,12 @@ async function bulkAddRule(sessionIds) {
     const reasons = [...new Set(results.filter(r => r.status === 'rejected').map(r => r.reason?.message || 'lỗi'))];
     Toast.error(`Lỗi ${failN}/${results.length}: ${reasons.slice(0, 2).join(' / ')}`);
   }
-  if (okN) Toast.success(`Đã thêm luật cho ${okN}/${results.length} phiên`);
+  if (okN) Toast.success(`Đã thêm rule cho ${okN}/${results.length} phiên`);
 }
 
 async function bulkClearRules(sessionIds) {
   // Count rules trước để hiển thị trong xác nhận
-  Toast.info('Đang đếm luật...');
+  Toast.info('Đang đếm rule...');
   const lists = await Promise.allSettled(sessionIds.map(sid =>
     Api.listRules({ scope: 'session', session_id: sid })
   ));
@@ -610,18 +610,18 @@ async function bulkClearRules(sessionIds) {
       r.value.forEach(rule => allRules.push({ ...rule, _sid: sessionIds[idx] }));
     }
   });
-  if (!allRules.length) { Toast.info('Các phiên đã chọn không có luật riêng nào'); return; }
+  if (!allRules.length) { Toast.info('Các phiên đã chọn không có rule riêng nào'); return; }
 
   const ok = await Dialog.confirm(
-    `Xóa <b>${allRules.length}</b> luật áp dụng cho <b>${sessionIds.length}</b> phiên đã chọn?\n\nLuật toàn hệ thống (scope=global) KHÔNG bị ảnh hưởng.`,
-    { title: 'Xóa hết luật của các phiên đã chọn', okText: `Xóa ${allRules.length} luật`, danger: true }
+    `Xóa <b>${allRules.length}</b> rule áp dụng cho <b>${sessionIds.length}</b> phiên đã chọn?\n\nRule toàn hệ thống (scope=global) KHÔNG bị ảnh hưởng.`,
+    { title: 'Xóa hết rule của các phiên đã chọn', okText: `Xóa ${allRules.length} rule`, danger: true }
   );
   if (!ok) return;
 
-  Toast.info(`Đang xóa ${allRules.length} luật...`);
+  Toast.info(`Đang xóa ${allRules.length} rule...`);
   const results = await Promise.allSettled(allRules.map(r => Api.deleteRule(r.id)));
   const okN = results.filter(x => x.status === 'fulfilled').length;
-  if (okN === results.length) Toast.success(`Đã xóa ${okN} luật`);
+  if (okN === results.length) Toast.success(`Đã xóa ${okN} rule`);
   else Toast.error(`Đã xóa ${okN}/${results.length} — ${results.length - okN} thất bại`);
 }
 
@@ -654,7 +654,7 @@ async function loadSessionRulesList() {
     const rs = await Api.listRules({ scope: 'session', session_id: _srSid });
     const tbody = document.querySelector('#sr-table tbody');
     if (!rs.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="muted">(phiên này chưa có luật riêng — chỉ áp dụng luật toàn hệ thống)</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="muted">(phiên này chưa có rule riêng — chỉ áp dụng rule toàn hệ thống)</td></tr>';
       return;
     }
     tbody.innerHTML = rs.map(r => `<tr>
@@ -665,7 +665,7 @@ async function loadSessionRulesList() {
       <td class="muted small">${escapeHTML(r.note || '')}</td>
       <td><button class="small danger" onclick="deleteSessionRule(${r.id})">Xóa</button></td>
     </tr>`).join('');
-  } catch (e) { Toast.error('Lỗi tải luật: ' + e.message); }
+  } catch (e) { Toast.error('Lỗi tải rule: ' + e.message); }
 }
 
 async function submitSessionRule() {
@@ -680,21 +680,21 @@ async function submitSessionRule() {
   if (!data.value) { Toast.error('Ô "Giá trị" không được để trống'); return; }
   try {
     await Api.createRule(data);
-    Toast.success('Đã thêm luật');
+    Toast.success('Đã thêm rule');
     document.getElementById('sr-value').value = '';
     document.getElementById('sr-note').value = '';
     loadSessionRulesList();
-  } catch (e) { Toast.error('Lỗi thêm luật: ' + e.message); }
+  } catch (e) { Toast.error('Lỗi thêm rule: ' + e.message); }
 }
 
 async function deleteSessionRule(id) {
-  const ok = await Dialog.confirm(`Xóa luật #${id} của phiên này?`, {
-    title: 'Xác nhận xóa luật', okText: 'Xóa', danger: true,
+  const ok = await Dialog.confirm(`Xóa rule #${id} của phiên này?`, {
+    title: 'Xác nhận xóa rule', okText: 'Xóa', danger: true,
   });
   if (!ok) return;
   try {
     await Api.deleteRule(id);
-    Toast.success('Đã xóa luật');
+    Toast.success('Đã xóa rule');
     loadSessionRulesList();
   } catch (e) { Toast.error(e.message); }
 }

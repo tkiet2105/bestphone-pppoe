@@ -43,14 +43,14 @@ async function loadSessionRules() {
   const btn = document.getElementById('s-add-btn');
   if (!sid) {
     btn.disabled = true;
-    document.querySelector('#s-table tbody').innerHTML = '<tr><td colspan="6" class="muted">Chọn phiên ở trên để xem các luật áp dụng riêng cho phiên đó.</td></tr>';
+    document.querySelector('#s-table tbody').innerHTML = '<tr><td colspan="6" class="muted">Chọn phiên ở trên để xem các rule áp dụng riêng cho phiên đó.</td></tr>';
     return;
   }
   btn.disabled = false;
   try {
     const rs = await Api.listRules({ scope: 'session', session_id: sid });
-    document.querySelector('#s-table tbody').innerHTML = renderRows(rs) || '<tr><td colspan="6" class="muted">(Phiên này chưa có luật riêng nào)</td></tr>';
-  } catch (e) { Toast.error('Lỗi tải luật của phiên: ' + e.message); }
+    document.querySelector('#s-table tbody').innerHTML = renderRows(rs) || '<tr><td colspan="6" class="muted">(Phiên này chưa có rule riêng nào)</td></tr>';
+  } catch (e) { Toast.error('Lỗi tải rule của phiên: ' + e.message); }
 }
 
 function renderRows(rs) {
@@ -74,10 +74,10 @@ function openCreateRule(scope) {
     const sid = document.getElementById('s-pick').value;
     if (!sid) { Toast.error('Vui lòng chọn phiên trước'); return; }
     document.getElementById('rm-session-id').value = sid;
-    document.getElementById('rm-title').textContent = `Tạo luật cho phiên #${sid}`;
+    document.getElementById('rm-title').textContent = `Tạo rule cho phiên #${sid}`;
   } else {
     document.getElementById('rm-session-id').value = '';
-    document.getElementById('rm-title').textContent = 'Tạo luật toàn hệ thống';
+    document.getElementById('rm-title').textContent = 'Tạo rule toàn hệ thống';
   }
   document.getElementById('rm-action').value = 'deny';
   document.getElementById('rm-kind').value = 'domain';
@@ -108,10 +108,10 @@ async function submitRule() {
   if (!data.value) { Toast.error('Ô "Giá trị" không được để trống'); return; }
   try {
     await Api.createRule(data);
-    Toast.success('Đã tạo luật');
+    Toast.success('Đã tạo rule');
     closeModal('rule-modal');
     refresh(data.scope);
-  } catch (e) { Toast.error('Lỗi tạo luật: ' + e.message); }
+  } catch (e) { Toast.error('Lỗi tạo rule: ' + e.message); }
 }
 
 async function toggleAction(id, current) {
@@ -119,8 +119,8 @@ async function toggleAction(id, current) {
   const cur = current === 'allow' ? 'Cho phép' : 'Chặn';
   const nx  = next    === 'allow' ? 'Cho phép' : 'Chặn';
   const ok = await Dialog.confirm(
-    `Đổi hành động của luật #${id} từ <b>${cur}</b> sang <b>${nx}</b>?`,
-    { title: 'Đổi hành động luật', okText: 'Đổi' }
+    `Đổi hành động của rule #${id} từ <b>${cur}</b> sang <b>${nx}</b>?`,
+    { title: 'Đổi hành động rule', okText: 'Đổi' }
   );
   if (!ok) return;
   try {
@@ -131,8 +131,8 @@ async function toggleAction(id, current) {
 }
 
 async function deleteRule(id, scope) {
-  const ok = await Dialog.confirm(`Xóa luật #${id}?`, {
-    title: 'Xác nhận xóa luật', okText: 'Xóa', danger: true,
+  const ok = await Dialog.confirm(`Xóa rule #${id}?`, {
+    title: 'Xác nhận xóa rule', okText: 'Xóa', danger: true,
   });
   if (!ok) return;
   try {

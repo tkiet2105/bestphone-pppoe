@@ -10,18 +10,18 @@
     <div class="card">
       <h2>Rules / cho phép truy cập</h2>
       <p class="muted small">
-        <strong>Chặn ưu tiên</strong>: chỉ cần <em>1</em> luật <b>Chặn</b> khớp → từ chối.
-        Nếu trong phạm vi có luật <b>Cho phép</b> → kích hoạt <em>chế độ giới hạn</em>: chỉ những request khớp luật Cho phép mới qua.<br>
+        <strong>Chặn ưu tiên</strong>: chỉ cần <em>1</em> rule <b>Chặn</b> khớp → từ chối.
+        Nếu trong phạm vi có rule <b>Cho phép</b> → kích hoạt <em>chế độ giới hạn</em>: chỉ những request khớp rule Cho phép mới qua.<br>
         <b>Loại "Tên miền"</b> lọc theo <em>host đích</em> client muốn vào — vd <span class="mono">example.com</span> (chính xác) hoặc <span class="mono">*.example.com</span> (mọi tên miền con).<br>
         <b>Loại "IP nguồn"</b> lọc theo <em>địa chỉ IP của máy đang dùng proxy</em> (client) — vd <span class="mono">1.2.3.4</span> hoặc dải <span class="mono">10.0.0.0/8</span>. Dùng để chặn người dùng cụ thể khỏi proxy.
       </p>
     </div>
 
-    <!-- Luật toàn hệ thống -->
+    <!-- Rule toàn hệ thống -->
     <div class="card">
       <div class="row" style="margin-bottom:12px">
-        <h3 style="margin:0;flex:1">Luật toàn hệ thống <span class="muted small" id="g-count"></span></h3>
-        <button onclick="openCreateRule('global')">+ Thêm luật toàn hệ thống</button>
+        <h3 style="margin:0;flex:1">Rule toàn hệ thống <span class="muted small" id="g-count"></span></h3>
+        <button onclick="openCreateRule('global')">+ Thêm rule toàn hệ thống</button>
       </div>
       <table id="g-table">
         <thead><tr>
@@ -31,28 +31,28 @@
       </table>
     </div>
 
-    <!-- Luật theo phiên -->
+    <!-- Rule theo phiên -->
     <div class="card">
       <div class="row" style="margin-bottom:12px">
-        <h3 style="margin:0;flex:1">Luật theo từng phiên</h3>
+        <h3 style="margin:0;flex:1">Rule theo từng phiên</h3>
         <select id="s-pick" style="max-width:300px" onchange="loadSessionRules()">
           <option value="">— chọn phiên —</option>
         </select>
-        <button onclick="openCreateRule('session')" id="s-add-btn" disabled>+ Thêm luật cho phiên</button>
+        <button onclick="openCreateRule('session')" id="s-add-btn" disabled>+ Thêm rule cho phiên</button>
       </div>
       <table id="s-table">
         <thead><tr>
           <th>ID</th><th>Hành động</th><th>Loại</th><th>Giá trị</th><th>Ghi chú</th><th class="actions">Thao tác</th>
         </tr></thead>
-        <tbody><tr><td colspan="6" class="muted">Chọn phiên trong danh sách bên trên để xem và quản lý luật cho phiên đó.</td></tr></tbody>
+        <tbody><tr><td colspan="6" class="muted">Chọn phiên trong danh sách bên trên để xem và quản lý rule cho phiên đó.</td></tr></tbody>
       </table>
     </div>
   </main>
 
-  <!-- Modal tạo luật -->
+  <!-- Modal tạo rule -->
   <div class="modal-bg" id="rule-modal">
     <div class="modal">
-      <h3 id="rm-title">Tạo luật mới</h3>
+      <h3 id="rm-title">Tạo rule mới</h3>
       <input type="hidden" id="rm-scope">
       <input type="hidden" id="rm-session-id">
       <div class="form-row"><label>Hành động</label>
@@ -73,7 +73,7 @@
       <div class="form-row"><label>Ghi chú (tùy chọn)</label><input id="rm-note"></div>
       <div class="actions">
         <button class="secondary" onclick="closeModal('rule-modal')">Hủy</button>
-        <button onclick="submitRule()">Tạo luật</button>
+        <button onclick="submitRule()">Tạo rule</button>
       </div>
     </div>
   </div>
