@@ -542,8 +542,8 @@ async function bulkAddRule(sessionIds) {
         </select>
         <label class="muted small">Loại</label>
         <select id="bra-kind">
-          <option value="domain">Tên miền</option>
-          <option value="ip">IP / dải IP</option>
+          <option value="domain">Tên miền (host đích)</option>
+          <option value="ip">IP nguồn (máy client dùng proxy)</option>
         </select>
         <label class="muted small">Giá trị</label>
         <input id="bra-value" placeholder="example.com hoặc *.example.com">
@@ -561,7 +561,9 @@ async function bulkAddRule(sessionIds) {
       const kind = bg.querySelector('#bra-kind');
       const val  = bg.querySelector('#bra-value');
       kind.addEventListener('change', () => {
-        val.placeholder = kind.value === 'domain' ? 'example.com hoặc *.example.com' : '1.2.3.4 hoặc 10.0.0.0/8';
+        val.placeholder = kind.value === 'domain'
+          ? 'example.com hoặc *.example.com (host đích)'
+          : '1.2.3.4 hoặc 10.0.0.0/8 (IP máy client dùng proxy)';
       });
       // Intercept click OK để snapshot form trước khi DOM bị remove
       const okBtn = bg.querySelector('.dlg-actions button:last-child');
@@ -643,8 +645,8 @@ async function openSessionRules(sid) {
 function srUpdatePlaceholder() {
   const k = document.getElementById('sr-kind').value;
   document.getElementById('sr-value').placeholder = k === 'domain'
-    ? 'example.com hoặc *.example.com'
-    : '1.2.3.4 hoặc 10.0.0.0/8';
+    ? 'example.com hoặc *.example.com (host đích)'
+    : '1.2.3.4 hoặc 10.0.0.0/8 (IP client dùng proxy)';
 }
 
 async function loadSessionRulesList() {
@@ -658,7 +660,7 @@ async function loadSessionRulesList() {
     tbody.innerHTML = rs.map(r => `<tr>
       <td>${r.id}</td>
       <td><span class="badge ${r.action === 'deny' ? 'error' : 'connected'}">${r.action === 'deny' ? 'Chặn' : 'Cho phép'}</span></td>
-      <td>${r.kind === 'domain' ? 'Tên miền' : 'IP/Dải IP'}</td>
+      <td>${r.kind === 'domain' ? 'Tên miền (đích)' : 'IP nguồn (client)'}</td>
       <td class="mono">${escapeHTML(r.value)}</td>
       <td class="muted small">${escapeHTML(r.note || '')}</td>
       <td><button class="small danger" onclick="deleteSessionRule(${r.id})">Xóa</button></td>

@@ -42,7 +42,7 @@ func (l *listener) handleHTTP(conn net.Conn, firstByte byte) {
 		if h, _, err := net.SplitHostPort(host); err == nil {
 			hostOnly = h
 		}
-		if l.rules != nil && !l.rules.allowed(hostOnly) {
+		if l.rules != nil && !l.rules.allowed(hostOnly, remoteIP(conn)) {
 			writeHTTPStatus(conn, 403, "Forbidden by ruleset", "")
 			return
 		}
@@ -71,7 +71,7 @@ func (l *listener) handleHTTP(conn net.Conn, firstByte byte) {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		hostOnly = h
 	}
-	if l.rules != nil && !l.rules.allowed(hostOnly) {
+	if l.rules != nil && !l.rules.allowed(hostOnly, remoteIP(conn)) {
 		writeHTTPStatus(conn, 403, "Forbidden by ruleset", "")
 		return
 	}

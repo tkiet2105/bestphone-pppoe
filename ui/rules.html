@@ -10,11 +10,10 @@
     <div class="card">
       <h2>Rules / cho phép truy cập</h2>
       <p class="muted small">
-        <strong>Chặn ưu tiên</strong>: chỉ cần <em>1</em> luật <b>Chặn</b> khớp → traffic bị từ chối.
-        Nếu trong phạm vi có luật <b>Cho phép</b> → kích hoạt <em>chế độ giới hạn</em>:
-        chỉ những host khớp luật Cho phép mới qua.<br>
-        Tên miền dạng <span class="mono">example.com</span> (chính xác) hoặc <span class="mono">*.example.com</span> (mọi tên miền con).
-        Địa chỉ IP dạng <span class="mono">1.2.3.4</span> hoặc dải <span class="mono">10.0.0.0/8</span>.
+        <strong>Chặn ưu tiên</strong>: chỉ cần <em>1</em> luật <b>Chặn</b> khớp → từ chối.
+        Nếu trong phạm vi có luật <b>Cho phép</b> → kích hoạt <em>chế độ giới hạn</em>: chỉ những request khớp luật Cho phép mới qua.<br>
+        <b>Loại "Tên miền"</b> lọc theo <em>host đích</em> client muốn vào — vd <span class="mono">example.com</span> (chính xác) hoặc <span class="mono">*.example.com</span> (mọi tên miền con).<br>
+        <b>Loại "IP nguồn"</b> lọc theo <em>địa chỉ IP của máy đang dùng proxy</em> (client) — vd <span class="mono">1.2.3.4</span> hoặc dải <span class="mono">10.0.0.0/8</span>. Dùng để chặn người dùng cụ thể khỏi proxy.
       </p>
     </div>
 
@@ -64,8 +63,8 @@
       </div>
       <div class="form-row"><label>Loại</label>
         <select id="rm-kind" onchange="updateRulePlaceholder()">
-          <option value="domain">Tên miền</option>
-          <option value="ip">Địa chỉ IP / dải IP</option>
+          <option value="domain">Tên miền (host đích)</option>
+          <option value="ip">IP nguồn (máy client dùng proxy)</option>
         </select>
       </div>
       <div class="form-row"><label>Giá trị</label>

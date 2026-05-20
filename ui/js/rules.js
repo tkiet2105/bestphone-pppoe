@@ -36,7 +36,7 @@ function vnStatus(s) {
   }
 }
 function vnAction(a) { return a === 'deny' ? 'Chặn' : 'Cho phép'; }
-function vnKind(k)   { return k === 'domain' ? 'Tên miền' : 'IP/Dải IP'; }
+function vnKind(k)   { return k === 'domain' ? 'Tên miền (host đích)' : 'IP nguồn (client)'; }
 
 async function loadSessionRules() {
   const sid = document.getElementById('s-pick').value;
@@ -90,8 +90,8 @@ function openCreateRule(scope) {
 function updateRulePlaceholder() {
   const k = document.getElementById('rm-kind').value;
   document.getElementById('rm-value').placeholder = k === 'domain'
-    ? 'example.com hoặc *.example.com'
-    : '1.2.3.4 hoặc 10.0.0.0/8';
+    ? 'example.com hoặc *.example.com (host đích)'
+    : '1.2.3.4 hoặc 10.0.0.0/8 (IP máy client dùng proxy)';
 }
 
 async function submitRule() {

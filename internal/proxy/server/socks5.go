@@ -116,7 +116,7 @@ func (l *listener) handleSocks5(conn net.Conn, firstByte byte) {
 	addr := net.JoinHostPort(host, strconv.Itoa(int(port)))
 
 	// Access control: deny-wins
-	if l.rules != nil && !l.rules.allowed(host) {
+	if l.rules != nil && !l.rules.allowed(host, remoteIP(conn)) {
 		_ = socks5Reply(conn, socks5RepNotAllowed)
 		return
 	}
