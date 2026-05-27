@@ -1,0 +1,185 @@
+if (!ensureAuth()) {} else {
+  renderNav('users');
+  loadStatus();
+  loadUsers();
+}
+
+let _detailUser = '';
+
+async function loadStatus() {
+  try {
+    const s = await Api.claimStatus();
+    document.getElementById('st-sessions').textContent = s.total_connected_sessions;
+    document.getElementById('st-users').textContent = s.active_users;
+    document.getElementById('st-creds').textContent = s.total_claimed_creds;
+  } catch (e) { Toast.error(e.message); }
+}
+
+async function loadUsers() {
+  try {
+    const rows = await Api.claimUsers();
+    const tbody = document.querySelector('#users-table tbody');
+    if (!rows || rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="muted">Chưa có user nào claim.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(u => {
+      const exp = u.earliest_expiry
+        ? `<span class="mono small">${fmtTime(u.earliest_expiry)}</span>`
+        : '<span class="muted small">Vĩnh viễn</span>';
+      return `<tr>
+        <td class="mono">${escapeHTML(u.iuser_id)}</td>
+        <td>${u.cred_count}</td>
+        <td>${exp}</td>
+        <td class="actions">
+          <button class="small" onclick="showDetail('${escapeHTML(u.iuser_id)}')">Chi tiết</button>
+          <button class="small danger" onclick="releaseUserById('${escapeHTML(u.iuser_id)}')">Release</button>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch (e) { Toast.error(e.message); }
+}
+
+function fmtTime(s) {
+  if (!s) return '';
+  try {
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return s;
+    return d.toLocaleString('vi-VN');
+  } catch (_) { return s; }
+}
+
+function fmtExpiry(expiresAt) {
+  if (!expiresAt) return '<span class="muted">Vĩnh viễn</span>';
+  const remain = Math.round((new Date(expiresAt) - Date.now()) / 1000);
+  if (remain <= 0) return '<span class="badge error">Hết hạn</span>';
+  if (remain < 3600) return `<span class="badge warn">${Math.ceil(remain/60)}p</span>`;
+  if (remain < 86400) return `<span class="badge">${Math.round(remain/3600)}h</span>`;
+  return `<span class="badge">${Math.round(remain/86400)}d</span>`;
+}
+
+async function doClaim() {
+  const iuserId = document.getElementById('cl-iuserid').value.trim();
+  const count = parseInt(document.getElementById('cl-count').value) || 1;
+  const ttl = parseInt(document.getElementById('cl-ttl').value) || 0;
+  if (!iuserId) { Toast.error('Nhập iuser_id'); return; }
+  try {
+    const r = await Api.claim({ iuser_id: iuserId, count, ttl });
+    const div = document.getElementById('claim-result');
+    const creds = r.credentials || [];
+    if (creds.length === 0) {
+      div.innerHTML = '<span class="muted">Không có creds nào.</span>';
+      return;
+    }
+    const lines = creds.map(c => `${c.ip}:${c.port}:${c.username}:${c.password}`);
+    div.innerHTML = `<pre class="export-text" style="max-height:200px;overflow:auto;font-size:12px">${escapeHTML(lines.join('\n'))}</pre>
+      <button class="secondary small" onclick="copyText('${escapeHTML(lines.join('\\n'))}').then(()=>Toast.success('Đã sao chép'))">Sao chép</button>`;
+    Toast.success(`Đã claim ${creds.length} creds`);
+    loadStatus();
+    loadUsers();
+  } catch (e) { Toast.error(e.message); }
+}
+
+async function showDetail(iuserId) {
+  _detailUser = iuserId;
+  document.getElementById('det-uid').textContent = iuserId;
+  document.getElementById('detail-card').style.display = '';
+  await loadDetail();
+}
+
+function closeDetail() {
+  document.getElementById('detail-card').style.display = 'none';
+  _detailUser = '';
+}
+
+async function loadDetail() {
+  if (!_detailUser) return;
+  try {
+    const r = await Api.claimUserStatus(_detailUser);
+    const creds = r.credentials || [];
+    const tbody = document.querySelector('#detail-table tbody');
+    if (creds.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="muted">Không có creds.</td></tr>';
+      document.getElementById('det-connstr').textContent = '';
+      return;
+    }
+    tbody.innerHTML = creds.map(c => `<tr>
+      <td>${c.cred_id}</td>
+      <td>#${c.session_id}</td>
+      <td class="mono">${escapeHTML(c.ip)}:${c.port}</td>
+      <td class="mono">${escapeHTML(c.username)}</td>
+      <td class="mono">${escapeHTML(c.password)}</td>
+      <td>${fmtExpiry(c.expires_at)}</td>
+      <td class="actions">
+        <button class="small" onclick="changeCred(${c.cred_id})">Đổi IP</button>
+        <button class="small danger" onclick="deleteCred(${c.cred_id})">Xóa</button>
+      </td>
+    </tr>`).join('');
+    const lines = creds.map(c => `${c.ip}:${c.port}:${c.username}:${c.password}`);
+    document.getElementById('det-connstr').textContent = lines.join('\n');
+  } catch (e) { Toast.error(e.message); }
+}
+
+async function copyConnStr() {
+  const text = document.getElementById('det-connstr').textContent;
+  if (await copyText(text)) Toast.success('Đã sao chép');
+}
+
+async function changeCred(credId) {
+  if (!_detailUser) return;
+  try {
+    await Api.changeCreds({ iuser_id: _detailUser, cred_ids: [credId] });
+    Toast.success('Đã đổi IP');
+    loadDetail();
+    loadStatus();
+  } catch (e) { Toast.error(e.message); }
+}
+
+async function deleteCred(credId) {
+  if (!_detailUser) return;
+  const ok = await Dialog.confirm('Xóa credential #' + credId + '?', { danger: true });
+  if (!ok) return;
+  try {
+    await Api.changeCreds({ iuser_id: _detailUser, cred_ids: [credId] });
+    Toast.success('Đã xóa');
+    loadDetail();
+    loadUsers();
+    loadStatus();
+  } catch (e) { Toast.error(e.message); }
+}
+
+async function extendUser() {
+  if (!_detailUser) return;
+  const ttl = parseInt(document.getElementById('det-ttl').value) || 0;
+  if (ttl <= 0) { Toast.error('TTL phải > 0'); return; }
+  try {
+    await Api.extendCreds({ iuser_id: _detailUser, ttl });
+    Toast.success('Đã gia hạn');
+    loadDetail();
+    loadUsers();
+  } catch (e) { Toast.error(e.message); }
+}
+
+async function releaseUser() {
+  if (!_detailUser) return;
+  const ok = await Dialog.confirm(`Release tất cả creds của ${_detailUser}?`, { danger: true });
+  if (!ok) return;
+  try {
+    const r = await Api.releaseCreds({ iuser_id: _detailUser });
+    Toast.success(`Đã release ${r.released} creds`);
+    closeDetail();
+    loadUsers();
+    loadStatus();
+  } catch (e) { Toast.error(e.message); }
+}
+
+async function releaseUserById(iuserId) {
+  const ok = await Dialog.confirm(`Release tất cả creds của ${iuserId}?`, { danger: true });
+  if (!ok) return;
+  try {
+    const r = await Api.releaseCreds({ iuser_id: iuserId });
+    Toast.success(`Đã release ${r.released} creds`);
+    loadUsers();
+    loadStatus();
+  } catch (e) { Toast.error(e.message); }
+}

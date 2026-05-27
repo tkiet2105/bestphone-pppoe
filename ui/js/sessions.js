@@ -16,7 +16,7 @@ async function init() {
   if (initialLine) document.getElementById('filter-line').value = initialLine;
   await loadSessions();
   Api.subscribeEvents((type) => {
-    if (['session.status', 'session.public_ip', 'session.rotate', 'proxy.started', 'proxy.stopped'].includes(type)) {
+    if (['session.status', 'session.public_ip', 'session.rotate', 'session.auto_rotate_paused', 'session.reconnect_failed', 'session.reconnect_ok', 'proxy.started', 'proxy.stopped'].includes(type)) {
       loadSessions();
     }
   });
@@ -107,7 +107,7 @@ function lineName(id) {
 function renderSessions() {
   const tbody = document.querySelector('#sessions-table tbody');
   if (!_sessions.length) {
-    tbody.innerHTML = '<tr><td colspan="13" class="muted">Chưa có session nào. Bấm "⊕ Tạo session" để tạo.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="14" class="muted">Chưa có session nào. Bấm "⊕ Tạo session" để tạo.</td></tr>';
     _updateSelUI();
     return;
   }
@@ -120,6 +120,18 @@ function renderSessions() {
       ? `<span class="mono small" style="color:#fbbf24" title="${escapeHTML(s.last_error)}">${escapeHTML(s.last_error.length > 50 ? s.last_error.slice(0,50) + '…' : s.last_error)}</span>
          <a href="/logs.html?filter=${encodeURIComponent(s.username)}" target="_blank" class="small">log↗</a>`
       : '<span class="muted small">—</span>';
+    const failBadge = s.rotate_fail_count > 0
+      ? `<span class="badge error" style="margin-left:4px" title="${s.rotate_fail_count} lần fail kể từ lần live cuối">⚠ ${s.rotate_fail_count} fail</span>`
+      : '';
+    let reconnectBadge = '';
+    if (s.reconnect_attempts > 0 && s.status !== 'connected') {
+      if (s.next_reconnect_at) {
+        const remain = Math.max(0, Math.round((new Date(s.next_reconnect_at) - Date.now()) / 60000));
+        reconnectBadge = `<span class="badge warn" style="margin-left:4px" title="Sẽ thử lại sau ${remain} phút">Thử lại ${s.reconnect_attempts} (còn ${remain}p)</span>`;
+      } else {
+        reconnectBadge = `<span class="badge error" style="margin-left:4px">Đã thử ${s.reconnect_attempts} lần</span>`;
+      }
+    }
     const isSel = _selected.has(s.id);
     return `<tr class="pp-row${isSel ? ' sel' : ''}" data-sess-id="${s.id}">
       <td class="cb-cell"><input type="checkbox" class="row-check" ${isSel ? 'checked' : ''} onchange="toggleRowSel(${s.id}, this.checked)"></td>
@@ -128,11 +140,12 @@ function renderSessions() {
       <td class="mono">ppp${s.ppp_unit}</td>
       <td class="mono">${escapeHTML(s.iface || '—')}</td>
       <td class="mono small">${escapeHTML(s.username)}</td>
-      <td>${statusBadge(s.status)}</td>
+      <td>${statusBadge(s.status)}${failBadge}${reconnectBadge}</td>
+      <td class="mono small" data-uptime-since="${s.connected_at || ''}">${uptimeBadge(s)}</td>
       <td class="mono">${escapeHTML(s.public_ip || s.ip || '—')}</td>
       <td class="mono">${s.proxy_port || '—'}</td>
       <td>${s.creds_count} <a href="#" onclick="event.preventDefault();openCreds(${s.id},${s.proxy_id})">sửa</a></td>
-      <td><a href="#" onclick="event.preventDefault();openAutoRotateDialog(${s.id})" title="Click để cấu hình chu kỳ tự đổi IP">${autoRotateBadge(s.auto_rotate_seconds || 0, s.last_rotate_at)}</a></td>
+      <td><a href="#" onclick="event.preventDefault();openAutoRotateDialog(${s.id})" title="Click để cấu hình chu kỳ tự đổi IP">${autoRotateBadge(s.auto_rotate_seconds || 0, s.last_rotate_at, s.auto_rotate_paused, s.id)}</a></td>
       <td>${errCell}</td>
       <td class="actions">
         <label class="switch" title="${s.proxy_status === 'running' ? 'Đang chạy — click để tắt' : 'Đã dừng — click để bật'}">
@@ -321,6 +334,9 @@ function _showCtxMenu(x, y) {
     <div class="ctx-item" data-act="auto-rotate">
       <span class="ctx-icon">⟳</span><span style="flex:1">Cấu hình <b>tự đổi IP</b> cho ${n} session đã chọn…</span>
     </div>
+    <div class="ctx-item" data-act="resume-rotate">
+      <span class="ctx-icon">▶</span><span style="flex:1">Tiếp tục xoay tự động (bỏ tạm dừng)</span>
+    </div>
     <div class="ctx-sep"></div>
     <div class="ctx-item" data-act="copy-default-pub">
       <span class="ctx-icon">⎘</span><span style="flex:1">Copy proxy <b>mặc định</b> (Public IP)</span>
@@ -393,6 +409,7 @@ async function bulkAction(act) {
     case 'rule-add':           return bulkAddRule(ids);
     case 'rule-clear':         return bulkClearRules(ids);
     case 'auto-rotate':        return bulkAutoRotate(ids);
+    case 'resume-rotate':      return bulkResumeAutoRotate(ids);
     case 'delete': {
       const okDel = await Dialog.confirm(
         `Xóa <b>${ids.length}</b> phiên đã chọn?\n\nHành động không thể hoàn tác.`,
@@ -675,6 +692,14 @@ async function bulkAutoRotate(sessionIds) {
   } catch (e) { Toast.error('Lỗi: ' + e.message); }
 }
 
+async function bulkResumeAutoRotate(sessionIds) {
+  try {
+    const r = await Api.resumeAutoRotateBatch(sessionIds);
+    Toast.success(`Đã tiếp tục xoay tự động cho ${r.updated} session`);
+    loadSessions();
+  } catch (e) { Toast.error('Lỗi: ' + e.message); }
+}
+
 // Per-session rule manager modal ─────────────────────────────────────────────
 let _srSid = 0;
 
@@ -708,9 +733,40 @@ function fmtSeconds(sec) {
   return h ? `${d} ngày ${h}g` : `${d} ngày`;
 }
 
+// uptimeBadge — hiển thị thời gian live kể từ connected_at.
+function uptimeBadge(s) {
+  if (s.status !== 'connected' || !s.connected_at) {
+    return '<span class="muted small">—</span>';
+  }
+  const elapsed = Math.floor((Date.now() - new Date(s.connected_at).getTime()) / 1000);
+  if (elapsed < 0) return '<span class="muted small">—</span>';
+  return `<span class="mono small" style="color:#86efac">${fmtSeconds(elapsed)}</span>`;
+}
+
+// Live uptime ticker — cập nhật mỗi giây cho các cell có data-uptime-since
+let _uptimeTimer = null;
+function startUptimeTicker() {
+  if (_uptimeTimer) return;
+  _uptimeTimer = setInterval(() => {
+    document.querySelectorAll('[data-uptime-since]').forEach(el => {
+      const since = el.getAttribute('data-uptime-since');
+      if (!since) return;
+      const elapsed = Math.floor((Date.now() - new Date(since).getTime()) / 1000);
+      if (elapsed >= 0) {
+        el.innerHTML = `<span class="mono small" style="color:#86efac">${fmtSeconds(elapsed)}</span>`;
+      }
+    });
+  }, 1000);
+}
+startUptimeTicker();
+
 // autoRotateBadge — render cell hiển thị trạng thái auto-rotate.
 // Khi bật, hiển thị thêm "còn N phút" tới lần đổi kế tiếp.
-function autoRotateBadge(seconds, lastRotateAt) {
+// Khi tạm dừng do fail, hiển thị cảnh báo + nút tiếp tục.
+function autoRotateBadge(seconds, lastRotateAt, paused, sessionId) {
+  if (paused && seconds > 0) {
+    return `<span class="mono small" style="color:#f87171">⏸ Tạm dừng</span> <button class="small" onclick="event.preventDefault();event.stopPropagation();resumeAutoRotateUI(${sessionId})" title="Tiếp tục xoay tự động">▶ Tiếp tục</button>`;
+  }
   if (!seconds || seconds <= 0) {
     return `<span class="muted small">— Tắt</span>`;
   }
@@ -723,6 +779,14 @@ function autoRotateBadge(seconds, lastRotateAt) {
     else etaText = ' · còn ' + fmtSeconds(Math.round(remainMs / 1000));
   }
   return `<span class="mono small" style="color:#86efac">⟳ ${fmtSeconds(seconds)}</span><span class="muted small">${etaText}</span>`;
+}
+
+async function resumeAutoRotateUI(sid) {
+  try {
+    await Api.resumeAutoRotate(sid);
+    Toast.success(`Đã tiếp tục xoay tự động cho phiên #${sid}`);
+    loadSessions();
+  } catch (e) { Toast.error('Lỗi: ' + e.message); }
 }
 
 async function openAutoRotateDialog(sid) {
@@ -896,6 +960,16 @@ async function openCreds(sid, pid) {
   await loadCreds();
 }
 
+function credExpiryCell(r) {
+  if (!r.expires_at) return '<span class="muted small">Vĩnh viễn</span>';
+  const exp = new Date(r.expires_at);
+  const remain = Math.round((exp - Date.now()) / 1000);
+  if (remain <= 0) return '<span class="badge error">Hết hạn</span>';
+  if (remain < 3600) return `<span class="badge warn">${Math.ceil(remain/60)}p</span>`;
+  if (remain < 86400) return `<span class="badge">${Math.round(remain/3600)}h</span>`;
+  return `<span class="badge">${Math.round(remain/86400)}d</span>`;
+}
+
 async function loadCreds() {
   try {
     const rows = await Api.listCreds(_curPid);
@@ -905,17 +979,20 @@ async function loadCreds() {
       <td>${escapeHTML(r.label)}</td>
       <td class="mono">${escapeHTML(r.username)}</td>
       <td class="mono">${escapeHTML(r.password)}</td>
+      <td>${credExpiryCell(r)}</td>
       <td><input type="checkbox" ${r.enabled?'checked':''} onchange="toggleCred(${r.id},this.checked)"></td>
       <td><button class="small danger" onclick="delCred(${r.id})" title="Xóa tài khoản">✕ Xóa</button></td>
-    </tr>`).join('') || '<tr><td colspan="6" class="muted">(chưa có tài khoản — proxy đang mở, không cần đăng nhập)</td></tr>';
+    </tr>`).join('') || '<tr><td colspan="7" class="muted">(chưa có tài khoản — proxy đang mở, không cần đăng nhập)</td></tr>';
   } catch (e) { Toast.error(e.message); }
 }
 
 async function submitCred() {
+  const ttl = parseInt(document.getElementById('cm-ttl').value) || 0;
   const data = {
     label: document.getElementById('cm-label').value.trim(),
     username: document.getElementById('cm-user').value.trim(),
     password: document.getElementById('cm-pass').value.trim(),
+    ttl,
   };
   if (!data.username || !data.password) { Toast.error('Cần điền cả tên đăng nhập và mật khẩu'); return; }
   try {
@@ -923,6 +1000,7 @@ async function submitCred() {
     document.getElementById('cm-label').value = '';
     document.getElementById('cm-user').value = '';
     document.getElementById('cm-pass').value = '';
+    document.getElementById('cm-ttl').value = '0';
     loadCreds();
     Toast.success('Đã thêm tài khoản');
   } catch (e) { Toast.error(e.message); }
@@ -931,9 +1009,10 @@ async function submitCred() {
 async function submitBulkCred() {
   const count = parseInt(document.getElementById('cm-bulk-count').value) || 0;
   const prefix = document.getElementById('cm-bulk-prefix').value.trim() || 'u';
+  const ttl = parseInt(document.getElementById('cm-bulk-ttl').value) || 0;
   if (count < 1 || count > 200) { Toast.error('Số lượng phải từ 1 đến 200'); return; }
   try {
-    await Api.bulkCreds(_curPid, { count, prefix });
+    await Api.bulkCreds(_curPid, { count, prefix, ttl });
     loadCreds();
     Toast.success(`Đã sinh ${count} tài khoản`);
   } catch (e) { Toast.error(e.message); }

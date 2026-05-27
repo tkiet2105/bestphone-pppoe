@@ -8,6 +8,32 @@
 <body>
   <main>
     <div class="card">
+      <h2>Cấu hình hệ thống</h2>
+      <div style="max-width:520px">
+        <div class="form-row">
+          <label>Tự động kết nối lại session lỗi</label>
+          <select id="cfg-reconnect-enabled">
+            <option value="true">Bật</option>
+            <option value="false">Tắt</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Số lần thử tối đa</label>
+          <input type="number" id="cfg-reconnect-max-retries" min="1" max="100">
+          <div class="muted small">Sau khi vượt quá, session dừng thử và chờ xử lý thủ công.</div>
+        </div>
+        <div class="form-row">
+          <label>Thời gian chờ giữa các lần thử (phút)</label>
+          <input type="number" id="cfg-reconnect-pause-minutes" min="1" max="1440">
+          <div class="muted small">Sau mỗi lần fail, chờ khoảng thời gian này trước khi thử lại. Tối đa 1440 phút (24 giờ).</div>
+        </div>
+        <div class="actions">
+          <button onclick="saveSettings()">Lưu cấu hình</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>Thông tin tài khoản</h2>
       <table style="max-width:520px">
         <tr><th style="width:200px">Tên đăng nhập</th><td class="mono" id="me-username">—</td></tr>

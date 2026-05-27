@@ -38,7 +38,12 @@ type Session struct {
 	LastError         string     `gorm:"size:256" json:"last_error"`
 	LastRotateAt      *time.Time `json:"last_rotate_at,omitempty"`
 	AutoRotateSeconds int        `gorm:"default:0" json:"auto_rotate_seconds"` // 0=tắt, else chu kỳ giây
-	CreatedAt         time.Time  `json:"created_at"`
+	AutoRotatePaused  bool       `gorm:"default:false" json:"auto_rotate_paused"`
+	ConnectedAt       *time.Time `json:"connected_at,omitempty"`
+	RotateFailCount    int        `gorm:"default:0" json:"rotate_fail_count"`
+	ReconnectAttempts  int        `gorm:"default:0" json:"reconnect_attempts"`
+	NextReconnectAt    *time.Time `json:"next_reconnect_at,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
 }
 
 type Proxy struct {
@@ -49,12 +54,15 @@ type Proxy struct {
 }
 
 type ProxyCredential struct {
-	Id       uint   `gorm:"primaryKey" json:"id"`
-	ProxyId  uint   `gorm:"index;not null" json:"proxy_id"`
-	Label    string `gorm:"size:64" json:"label"`
-	Username string `gorm:"size:128;not null" json:"username"`
-	Password string `gorm:"size:256;not null" json:"password"`
-	Enabled  bool   `gorm:"default:true" json:"enabled"`
+	Id        uint       `gorm:"primaryKey" json:"id"`
+	ProxyId   uint       `gorm:"index;not null" json:"proxy_id"`
+	Label     string     `gorm:"size:64" json:"label"`
+	Username  string     `gorm:"size:128;not null" json:"username"`
+	Password  string     `gorm:"size:256;not null" json:"password"`
+	Enabled   bool       `gorm:"default:true" json:"enabled"`
+	IUserId   string     `gorm:"size:128;index" json:"iuser_id,omitempty"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 type Token struct {
@@ -97,4 +105,23 @@ type AccessRule struct {
 	Value     string    `gorm:"size:256;not null" json:"value"`                    // domain hoặc CIDR/IP
 	Note      string    `gorm:"size:256" json:"note"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type Setting struct {
+	Key   string `gorm:"primaryKey;size:64" json:"key"`
+	Value string `gorm:"size:256;not null" json:"value"`
+}
+
+type AuditLog struct {
+	Id           uint      `gorm:"primaryKey" json:"id"`
+	TokenId      uint      `gorm:"index" json:"token_id"`
+	UserId       *uint     `gorm:"index" json:"user_id,omitempty"`
+	ClientIP     string    `gorm:"size:64" json:"client_ip"`
+	Action       string    `gorm:"size:32;index;not null" json:"action"`
+	ResourceType string    `gorm:"size:32;index;not null" json:"resource_type"`
+	ResourceId   uint      `gorm:"index" json:"resource_id"`
+	OldValue     *string   `gorm:"type:text" json:"old_value,omitempty"`
+	NewValue     *string   `gorm:"type:text" json:"new_value,omitempty"`
+	Summary      string    `gorm:"size:256" json:"summary"`
+	CreatedAt    time.Time `gorm:"index" json:"created_at"`
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"os/exec"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/tkiet2105/bestphone-pppoe/internal/db"
 	"github.com/tkiet2105/bestphone-pppoe/internal/events"
 	"github.com/tkiet2105/bestphone-pppoe/internal/models"
 )
@@ -113,10 +115,15 @@ func (m *Manager) Dial(sessionID uint) error {
 		return fmt.Errorf("iface %s did not come UP", ifaceName)
 	}
 
+	now := time.Now()
 	sess.Iface = ifaceName
 	sess.IP = IfaceIPv4(ifaceName)
 	sess.Status = models.StatusConnected
 	sess.LastError = ""
+	sess.ConnectedAt = &now
+	sess.RotateFailCount = 0
+	sess.ReconnectAttempts = 0
+	sess.NextReconnectAt = nil
 	m.db.Save(&sess)
 	m.publish("session.status", map[string]any{
 		"session_id": sess.Id, "status": sess.Status, "iface": sess.Iface, "ip": sess.IP,
@@ -180,6 +187,7 @@ func (m *Manager) Rotate(sessionID uint) (oldIP, newIP string, err error) {
 	now := time.Now()
 	m.db.Model(&models.Session{}).Where("id = ?", sessionID).Update("last_rotate_at", &now)
 	if err := m.Dial(sessionID); err != nil {
+		m.db.Model(&models.Session{}).Where("id = ?", sessionID).Update("rotate_fail_count", gorm.Expr("rotate_fail_count + 1"))
 		return oldIP, "", err
 	}
 	m.db.First(&sess, sessionID)
@@ -227,7 +235,7 @@ func (m *Manager) StartAutoRotate(ctx context.Context) {
 func (m *Manager) autoRotateOnce() {
 	now := time.Now()
 	var sessions []models.Session
-	m.db.Where("auto_rotate_seconds > 0 AND status = ?", models.StatusConnected).Find(&sessions)
+	m.db.Where("auto_rotate_seconds > 0 AND auto_rotate_paused = ? AND status = ?", false, models.StatusConnected).Find(&sessions)
 	if len(sessions) == 0 {
 		return
 	}
@@ -251,7 +259,14 @@ func (m *Manager) autoRotateOnce() {
 			defer func() { <-sem }()
 			log.Printf("[auto-rotate] session %d due (interval=%ds, last=%v)", sid, interval, baseline.Format(time.RFC3339))
 			if _, _, err := m.Rotate(sid); err != nil {
-				log.Printf("[auto-rotate] session %d failed: %v", sid, err)
+				log.Printf("[auto-rotate] session %d failed, pausing auto-rotate: %v", sid, err)
+				m.db.Model(&models.Session{}).Where("id = ?", sid).Updates(map[string]any{
+					"auto_rotate_paused": true,
+					"rotate_fail_count":  gorm.Expr("rotate_fail_count + 1"),
+				})
+				m.publish("session.auto_rotate_paused", map[string]any{
+					"session_id": sid, "reason": err.Error(),
+				})
 			}
 		}()
 	}
@@ -274,6 +289,80 @@ func (m *Manager) reconcileOnce() {
 				log.Printf("[watchdog] redial session %d failed: %v", sid, err)
 			}
 		}(s.Id)
+	}
+
+	m.reconnectErrorSessions()
+}
+
+func (m *Manager) reconnectErrorSessions() {
+	if !db.GetSettingBool("reconnect_enabled", true) {
+		return
+	}
+	maxRetries := db.GetSettingInt("reconnect_max_retries", 5)
+	pauseMinutes := db.GetSettingInt("reconnect_pause_minutes", 60)
+
+	now := time.Now()
+	var errSessions []models.Session
+	m.db.Where(
+		"status IN (?, ?) AND reconnect_attempts < ? AND (next_reconnect_at IS NULL OR next_reconnect_at <= ?)",
+		models.StatusError, models.StatusDisconnected, maxRetries, now,
+	).Find(&errSessions)
+
+	for _, s := range errSessions {
+		sid := s.Id
+		attempt := s.ReconnectAttempts + 1
+		log.Printf("[reconnect] session %d attempt %d/%d", sid, attempt, maxRetries)
+
+		if err := m.Dial(sid); err != nil {
+			nextAt := now.Add(time.Duration(pauseMinutes) * time.Minute)
+			m.db.Model(&models.Session{}).Where("id = ?", sid).Updates(map[string]any{
+				"reconnect_attempts": attempt,
+				"next_reconnect_at":  nextAt,
+			})
+			log.Printf("[reconnect] session %d fail %d/%d, next try at %s: %v",
+				sid, attempt, maxRetries, nextAt.Format("15:04:05"), err)
+			m.publish("session.reconnect_failed", map[string]any{
+				"session_id": sid, "attempt": attempt, "max": maxRetries,
+				"next_at": nextAt.Format(time.RFC3339), "error": err.Error(),
+			})
+		} else {
+			var updated models.Session
+			m.db.First(&updated, sid)
+			log.Printf("[reconnect] session %d reconnected OK (IP=%s)", sid, updated.IP)
+			m.publish("session.reconnect_ok", map[string]any{
+				"session_id": sid, "ip": updated.IP,
+			})
+		}
+	}
+}
+
+func isPhysicalNIC(name string) bool {
+	for _, prefix := range []string{"lo", "ppp", "mvbp", "mv-", "docker", "veth", "br-", "tun", "tap", "wg", "virbr"} {
+		if strings.HasPrefix(name, prefix) {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *Manager) EnsurePhysicalNICsUp() {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		log.Printf("[nic-up] failed to list interfaces: %v", err)
+		return
+	}
+	for _, i := range ifaces {
+		if !isPhysicalNIC(i.Name) {
+			continue
+		}
+		if i.Flags&net.FlagUp != 0 {
+			continue
+		}
+		if err := exec.Command("ip", "link", "set", i.Name, "up").Run(); err != nil {
+			log.Printf("[nic-up] failed to bring up %s: %v", i.Name, err)
+		} else {
+			log.Printf("[nic-up] brought up %s", i.Name)
+		}
 	}
 }
 

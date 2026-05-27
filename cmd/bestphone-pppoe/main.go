@@ -38,6 +38,7 @@ func main() {
 	if err := db.SeedAdminUser(cfg.AdminUsername, cfg.AdminPassword); err != nil {
 		log.Printf("seed admin user: %v", err)
 	}
+	db.SeedDefaultSettings()
 
 	hub := events.NewHub()
 	api.SetEventHub(hub)
@@ -45,6 +46,8 @@ func main() {
 
 	pppoe.Init(db.DB, hub, cfg.DialConcurrent, cfg.RotateNewIP)
 	proxysrv.Init(db.DB, hub, cfg.ProxyPortMin, cfg.ProxyPortMax)
+
+	pppoe.M.EnsurePhysicalNICsUp()
 
 	// Restore: dial pending sessions + start proxy listeners đã ở status=running.
 	pppoe.M.RestoreState()
@@ -54,6 +57,7 @@ func main() {
 	defer cancel()
 	pppoe.M.StartWatchdog(ctx)
 	pppoe.M.StartAutoRotate(ctx)
+	proxysrv.M.StartCredCleanup(ctx)
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()

@@ -4,8 +4,30 @@ if (!ensureAuth()) {} else {
 }
 
 async function init() {
+  await loadSettings();
   await loadMe();
   await loadApiTokens();
+}
+
+async function loadSettings() {
+  try {
+    const s = await Api.getSettings();
+    document.getElementById('cfg-reconnect-enabled').value = s.reconnect_enabled || 'true';
+    document.getElementById('cfg-reconnect-max-retries').value = s.reconnect_max_retries || '5';
+    document.getElementById('cfg-reconnect-pause-minutes').value = s.reconnect_pause_minutes || '60';
+  } catch (e) { Toast.error('Lỗi tải cấu hình: ' + e.message); }
+}
+
+async function saveSettings() {
+  const data = {
+    reconnect_enabled: document.getElementById('cfg-reconnect-enabled').value,
+    reconnect_max_retries: document.getElementById('cfg-reconnect-max-retries').value,
+    reconnect_pause_minutes: document.getElementById('cfg-reconnect-pause-minutes').value,
+  };
+  try {
+    await Api.updateSettings(data);
+    Toast.success('Đã lưu cấu hình');
+  } catch (e) { Toast.error('Lỗi lưu: ' + e.message); }
 }
 
 function fmtTime(s) {

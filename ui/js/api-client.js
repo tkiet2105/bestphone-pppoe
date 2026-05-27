@@ -86,6 +86,8 @@ const Api = (() => {
     rotateSession: (id) => _req('POST', `/sessions/${id}/rotate`),
     setSessionEnabled: (id, enabled) => _req('POST', `/sessions/${id}/enabled`, { enabled }),
     setAutoRotate: (id, seconds) => _req('PUT', `/sessions/${id}/auto-rotate`, { seconds }),
+    resumeAutoRotate: (id) => _req('POST', `/sessions/${id}/auto-rotate/resume`),
+    resumeAutoRotateBatch: (ids) => _req('POST', '/sessions/auto-rotate/resume', { session_ids: ids }),
     setAutoRotateBatch: (ids, seconds) => _req('POST', '/sessions/auto-rotate/batch', { session_ids: ids, seconds }),
     rotateBatch: (ids, concurrency) => _req('POST', '/rotate', { session_ids: ids, concurrency: concurrency || 5 }),
 
@@ -99,6 +101,20 @@ const Api = (() => {
     // export
     exportProxies: (type, format) => _req('GET', `/proxies/export?type=${type || 'public'}&format=${format || 'text'}`),
 
+    // settings
+    getSettings: () => _req('GET', '/settings'),
+    updateSettings: (data) => _req('PUT', '/settings', data),
+
+    // claim system
+    claim: (data) => _req('POST', '/claim', data),
+    changeCreds: (data) => _req('POST', '/change', data),
+    listUserCreds: (iuserId) => _req('GET', `/user-creds?iuser_id=${encodeURIComponent(iuserId)}`),
+    releaseCreds: (data) => _req('POST', '/release', data),
+    extendCreds: (data) => _req('POST', '/extend', data),
+    claimStatus: () => _req('GET', '/claim/status'),
+    claimUserStatus: (iuserId) => _req('GET', `/claim/user-status?iuser_id=${encodeURIComponent(iuserId)}`),
+    claimUsers: () => _req('GET', '/claim/users'),
+
     // tokens
     listTokens: () => _req('GET', '/tokens'),
     createToken: (label) => _req('POST', '/tokens', { label }),
@@ -108,7 +124,7 @@ const Api = (() => {
     subscribeEvents: (onEvent) => {
       const es = new EventSource(BASE + '/events?token=' + encodeURIComponent(getToken()));
       es.addEventListener('hello', e => onEvent('hello', JSON.parse(e.data)));
-      ['session.status', 'session.public_ip', 'session.rotate', 'proxy.cred_changed', 'proxy.started', 'proxy.stopped'].forEach(t => {
+      ['session.status', 'session.public_ip', 'session.rotate', 'session.auto_rotate_paused', 'proxy.cred_changed', 'proxy.started', 'proxy.stopped'].forEach(t => {
         es.addEventListener(t, e => onEvent(t, JSON.parse(e.data)));
       });
       return es;
@@ -343,6 +359,7 @@ function renderNav(active) {
         <a href="/rules.html" class="${active==='rules'?'active':''}">Rules</a>
         <a href="/export.html" class="${active==='export'?'active':''}">Xuất proxy</a>
         <a href="/logs.html" class="${active==='logs'?'active':''}">Logs</a>
+        <a href="/users.html" class="${active==='users'?'active':''}">Users</a>
         <a href="/api.html" class="${active==='api'?'active':''}">API</a>
         <a href="/settings.html" class="${active==='settings'?'active':''}">Cài đặt</a>
       </nav>

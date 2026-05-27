@@ -4,9 +4,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -99,27 +101,38 @@ func CreateLineSessionsBulk(c *gin.Context) {
 		Error     string `json:"error,omitempty"`
 	}
 	out := make([]result, req.Count)
-	var wg sync.WaitGroup
+	const maxRetries = 3
 	for i := 0; i < req.Count; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			sub := createSessionReq{ProxyAuth: req.ProxyAuth}
-			sess, _, err := createSessionAndDial(line, sub)
-			r := result{}
-			if sess != nil {
-				r.SessionId = sess.Id
-				r.Status = sess.Status
+		if i > 0 {
+			time.Sleep(2 * time.Second)
+		}
+		sub := createSessionReq{ProxyAuth: req.ProxyAuth}
+		sess, _, err := createSessionAndDial(line, sub)
+		for retry := 1; retry <= maxRetries && err != nil && isPADITimeout(err.Error()) && sess != nil; retry++ {
+			log.Printf("[bulk-create] session %d PADI timeout, retry %d/%d", sess.Id, retry, maxRetries)
+			time.Sleep(time.Duration(3+retry*2) * time.Second)
+			if retryErr := pppoe.M.Dial(sess.Id); retryErr == nil {
+				err = nil
+				db.DB.First(&sess, sess.Id)
 			}
-			if err != nil {
-				r.Status = "error"
-				r.Error = truncateErr(err.Error(), 240)
-			}
-			out[idx] = r
-		}(i)
+		}
+		r := result{}
+		if sess != nil {
+			r.SessionId = sess.Id
+			r.Status = sess.Status
+		}
+		if err != nil {
+			r.Status = "error"
+			r.Error = truncateErr(err.Error(), 240)
+		}
+		out[i] = r
 	}
-	wg.Wait()
 	ok(c, out)
+}
+
+func isPADITimeout(s string) bool {
+	low := strings.ToLower(s)
+	return strings.Contains(low, "no pado") || strings.Contains(low, "padi") || strings.Contains(low, "timeout")
 }
 
 // truncateErr — gọn error message dài (pppd verbose) + extract AuthNak hint.
@@ -416,6 +429,49 @@ func SetSessionAutoRotateBatch(c *gin.Context) {
 		return
 	}
 	ok(c, gin.H{"updated": res.RowsAffected, "seconds": req.Seconds})
+}
+
+// ResumeAutoRotate — bỏ tạm dừng auto-rotate sau khi xoay fail, reset fail count.
+func ResumeAutoRotate(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	var s models.Session
+	if err := db.DB.First(&s, id).Error; err != nil {
+		fail(c, 404, "session không tồn tại")
+		return
+	}
+	if err := db.DB.Model(&s).Updates(map[string]any{
+		"auto_rotate_paused": false,
+		"rotate_fail_count":  0,
+	}).Error; err != nil {
+		fail(c, 500, err.Error())
+		return
+	}
+	ok(c, gin.H{"session_id": id, "auto_rotate_paused": false})
+}
+
+type resumeAutoRotateBatchReq struct {
+	SessionIds []uint `json:"session_ids" binding:"required"`
+}
+
+func ResumeAutoRotateBatch(c *gin.Context) {
+	var req resumeAutoRotateBatchReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, 400, err.Error())
+		return
+	}
+	if len(req.SessionIds) == 0 {
+		fail(c, 400, "thiếu session_ids")
+		return
+	}
+	res := db.DB.Model(&models.Session{}).Where("id IN ?", req.SessionIds).Updates(map[string]any{
+		"auto_rotate_paused": false,
+		"rotate_fail_count":  0,
+	})
+	if res.Error != nil {
+		fail(c, 500, res.Error.Error())
+		return
+	}
+	ok(c, gin.H{"updated": res.RowsAffected})
 }
 
 type rotateBatchReq struct {

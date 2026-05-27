@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Users — bestphone-pppoe</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <main>
+    <div class="card">
+      <div class="row" style="margin-bottom:8px">
+        <h2 style="margin:0;flex:1">Tổng quan Claim</h2>
+        <button class="secondary" onclick="loadStatus()">↻ Tải lại</button>
+      </div>
+      <div class="row" style="gap:32px" id="status-panel">
+        <div><span class="muted small">Sessions connected</span><br><strong id="st-sessions">—</strong></div>
+        <div><span class="muted small">Users active</span><br><strong id="st-users">—</strong></div>
+        <div><span class="muted small">Creds claimed</span><br><strong id="st-creds">—</strong></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="margin-bottom:8px">
+        <h2 style="margin:0;flex:1">Claim thủ công</h2>
+      </div>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <input id="cl-iuserid" placeholder="iuser_id" style="max-width:200px">
+        <input type="number" id="cl-count" value="1" min="1" max="100" style="max-width:100px" placeholder="Số creds">
+        <input type="number" id="cl-ttl" value="0" min="0" style="max-width:120px" placeholder="TTL (giây)">
+        <button onclick="doClaim()">Claim</button>
+      </div>
+      <div id="claim-result" style="margin-top:12px"></div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="margin-bottom:8px">
+        <h2 style="margin:0;flex:1">Danh sách Users</h2>
+        <button onclick="loadUsers()">↻ Tải lại</button>
+      </div>
+      <table id="users-table">
+        <thead><tr>
+          <th>IUser ID</th>
+          <th>Số creds</th>
+          <th>Hết hạn sớm nhất</th>
+          <th class="actions">Hành động</th>
+        </tr></thead>
+        <tbody><tr><td colspan="4" class="muted">(đang tải...)</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card" id="detail-card" style="display:none">
+      <div class="row" style="margin-bottom:8px">
+        <h2 style="margin:0;flex:1">Chi tiết user: <span id="det-uid" class="mono"></span></h2>
+        <button class="secondary" onclick="closeDetail()">Đóng</button>
+      </div>
+      <div class="row" style="gap:8px;margin-bottom:12px">
+        <button onclick="extendUser()">Gia hạn TTL</button>
+        <input type="number" id="det-ttl" value="3600" min="1" style="max-width:120px" placeholder="TTL (giây)">
+        <button class="danger" onclick="releaseUser()">Release tất cả</button>
+      </div>
+      <table id="detail-table">
+        <thead><tr>
+          <th>Cred ID</th>
+          <th>Session</th>
+          <th>IP:Port</th>
+          <th>Username</th>
+          <th>Password</th>
+          <th>Hết hạn</th>
+          <th class="actions">Hành động</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+      <div style="margin-top:8px">
+        <h4 style="margin:0 0 4px;font-size:13px">Connection strings</h4>
+        <pre id="det-connstr" class="export-text" style="max-height:150px;overflow:auto;font-size:12px"></pre>
+        <button class="secondary small" onclick="copyConnStr()">Sao chép</button>
+      </div>
+    </div>
+  </main>
+
+  <script src="/js/api-client.js"></script>
+  <script src="/js/users.js"></script>
+</body>
+</html>

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -23,6 +24,7 @@ type createCredReq struct {
 	Label    string `json:"label"`
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
+	Ttl      int    `json:"ttl"`
 }
 
 func CreateCred(c *gin.Context) {
@@ -39,6 +41,10 @@ func CreateCred(c *gin.Context) {
 		Password: req.Password,
 		Enabled:  true,
 	}
+	if req.Ttl > 0 {
+		exp := time.Now().Add(time.Duration(req.Ttl) * time.Second)
+		cr.ExpiresAt = &exp
+	}
 	if err := db.DB.Create(&cr).Error; err != nil {
 		fail(c, 500, err.Error())
 		return
@@ -50,6 +56,7 @@ func CreateCred(c *gin.Context) {
 type bulkCredReq struct {
 	Count  int    `json:"count" binding:"required"`
 	Prefix string `json:"prefix"` // username prefix, default "u"
+	Ttl    int    `json:"ttl"`
 }
 
 func BulkCreateCreds(c *gin.Context) {
@@ -67,15 +74,20 @@ func BulkCreateCreds(c *gin.Context) {
 	if prefix == "" {
 		prefix = "u"
 	}
+	var expPtr *time.Time
+	if req.Ttl > 0 {
+		exp := time.Now().Add(time.Duration(req.Ttl) * time.Second)
+		expPtr = &exp
+	}
 	out := make([]models.ProxyCredential, 0, req.Count)
 	for i := 0; i < req.Count; i++ {
-		// Mode 2 pattern: username = prefix + randHex(4), password = randHex(8)
 		cr := models.ProxyCredential{
-			ProxyId:  uint(pid),
-			Label:    "sub-cred",
-			Username: prefix + randHex(4),
-			Password: randHex(8),
-			Enabled:  true,
+			ProxyId:   uint(pid),
+			Label:     "sub-cred",
+			Username:  prefix + randHex(4),
+			Password:  randHex(8),
+			Enabled:   true,
+			ExpiresAt: expPtr,
 		}
 		if err := db.DB.Create(&cr).Error; err != nil {
 			fail(c, 500, err.Error())
@@ -92,6 +104,7 @@ type updateCredReq struct {
 	Password *string `json:"password"`
 	Enabled  *bool   `json:"enabled"`
 	Label    *string `json:"label"`
+	Ttl      *int    `json:"ttl"`
 }
 
 func UpdateCred(c *gin.Context) {
@@ -118,6 +131,14 @@ func UpdateCred(c *gin.Context) {
 	}
 	if req.Label != nil {
 		cr.Label = *req.Label
+	}
+	if req.Ttl != nil {
+		if *req.Ttl > 0 {
+			exp := time.Now().Add(time.Duration(*req.Ttl) * time.Second)
+			cr.ExpiresAt = &exp
+		} else {
+			cr.ExpiresAt = nil
+		}
 	}
 	db.DB.Save(&cr)
 	proxysrv.M.ReloadCreds(uint(pid))

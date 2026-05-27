@@ -24,7 +24,7 @@ header button {
   padding: 6px 14px; border-radius: 6px; cursor: pointer;
 }
 
-main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+main { padding: 24px; margin: 0 auto; }
 
 .card {
   background: #1e293b; border: 1px solid #334155;

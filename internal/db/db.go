@@ -31,7 +31,7 @@ func Init(dbPath string) error {
 	sqlDB, _ := g.DB()
 	sqlDB.SetMaxOpenConns(1) // SQLite không thích nhiều writer
 	DB = g
-	if err := DB.AutoMigrate(&models.Line{}, &models.Session{}, &models.Proxy{}, &models.ProxyCredential{}, &models.Token{}, &models.AccessRule{}, &models.User{}); err != nil {
+	if err := DB.AutoMigrate(&models.Line{}, &models.Session{}, &models.Proxy{}, &models.ProxyCredential{}, &models.Token{}, &models.AccessRule{}, &models.User{}, &models.AuditLog{}, &models.Setting{}); err != nil {
 		return fmt.Errorf("automigrate: %w", err)
 	}
 	// Backfill 1-shot: nếu có column legacy isp_username/isp_password (từ v1.2.x),
@@ -44,6 +44,21 @@ func Init(dbPath string) error {
 		_ = DB.Migrator().DropColumn(&models.Line{}, "isp_password")
 	}
 	return nil
+}
+
+func SeedDefaultSettings() {
+	defaults := map[string]string{
+		"reconnect_enabled":       "true",
+		"reconnect_max_retries":   "1",
+		"reconnect_pause_minutes": "60",
+	}
+	for k, v := range defaults {
+		var count int64
+		DB.Model(&models.Setting{}).Where("key = ?", k).Count(&count)
+		if count == 0 {
+			DB.Create(&models.Setting{Key: k, Value: v})
+		}
+	}
 }
 
 // SeedAdminToken — nếu DB chưa có API token nào, insert token từ env ADMIN_TOKEN.

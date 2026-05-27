@@ -35,7 +35,9 @@ func RegisterRoutes(r *gin.Engine) {
 		g.POST("/sessions/:id/rotate", RotateSession)
 		g.POST("/sessions/:id/enabled", SetSessionEnabled)
 		g.PUT("/sessions/:id/auto-rotate", SetSessionAutoRotate)
+		g.POST("/sessions/:id/auto-rotate/resume", ResumeAutoRotate)
 		g.POST("/sessions/auto-rotate/batch", SetSessionAutoRotateBatch)
+		g.POST("/sessions/auto-rotate/resume", ResumeAutoRotateBatch)
 
 		g.GET("/proxies/export", ExportProxies)
 		g.GET("/proxies/:id/credentials", ListCreds)
@@ -43,6 +45,15 @@ func RegisterRoutes(r *gin.Engine) {
 		g.POST("/proxies/:id/credentials/bulk", BulkCreateCreds)
 		g.PUT("/proxies/:id/credentials/:cid", UpdateCred)
 		g.DELETE("/proxies/:id/credentials/:cid", DeleteCred)
+
+		g.POST("/claim", ClaimCredentials)
+		g.POST("/change", ChangeCredentials)
+		g.GET("/user-creds", ListUserCreds)
+		g.POST("/release", ReleaseCredentials)
+		g.POST("/extend", ExtendCredentials)
+		g.GET("/claim/status", ClaimStatus)
+		g.GET("/claim/user-status", ClaimUserStatus)
+		g.GET("/claim/users", ClaimUsers)
 
 		g.POST("/rotate", RotateBatch)
 
@@ -53,6 +64,9 @@ func RegisterRoutes(r *gin.Engine) {
 		g.POST("/rules", CreateRule)
 		g.PUT("/rules/:id", UpdateRule)
 		g.DELETE("/rules/:id", DeleteRule)
+
+		g.GET("/settings", GetSettings)
+		g.PUT("/settings", UpdateSettings)
 
 		g.GET("/tokens", ListTokens)
 		g.POST("/tokens", CreateToken)

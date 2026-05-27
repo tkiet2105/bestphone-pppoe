@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -161,6 +162,45 @@ func (m *Manager) RestoreAll() {
 	for _, p := range proxies {
 		if err := m.Start(p.Id); err != nil {
 			log.Printf("[proxysrv] restore proxy %d failed: %v", p.Id, err)
+		}
+	}
+}
+
+func (m *Manager) StartCredCleanup(ctx context.Context) {
+	go func() {
+		t := time.NewTicker(60 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				m.cleanExpiredCreds()
+			}
+		}
+	}()
+}
+
+func (m *Manager) cleanExpiredCreds() {
+	now := time.Now()
+	var expired []models.ProxyCredential
+	m.db.Where("expires_at IS NOT NULL AND expires_at <= ?", now).Find(&expired)
+	if len(expired) == 0 {
+		return
+	}
+
+	affectedProxies := make(map[uint]bool)
+	for _, cr := range expired {
+		affectedProxies[cr.ProxyId] = true
+	}
+
+	res := m.db.Where("expires_at IS NOT NULL AND expires_at <= ?", now).Delete(&models.ProxyCredential{})
+	log.Printf("[cred-cleanup] deleted %d expired credentials", res.RowsAffected)
+
+	for pid := range affectedProxies {
+		m.ReloadCreds(pid)
+		if m.hub != nil {
+			m.hub.Publish("proxy.cred_expired", map[string]any{"proxy_id": pid})
 		}
 	}
 }

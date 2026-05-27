@@ -128,6 +128,25 @@ const SPEC = [
     ],
   },
   {
+    group: 'Claim System (cấp proxy cho end-user)',
+    items: [
+      { method: 'POST', path: '/api/v1/claim', desc: 'Claim N credentials trên N sessions khác nhau cho 1 iuser_id. Gọi lại cùng iuser_id → trả creds cũ (idempotent).',
+        body: '{ "iuser_id":"user-1", "count":3, "ttl":3600 }',
+        resp: '{ "iuser_id":"user-1", "credentials":[{ "cred_id":1, "session_id":129, "ip":"...", "port":30000, "username":"u...", "password":"...", "expires_at":"..." }] }' },
+      { method: 'POST', path: '/api/v1/change', desc: 'Đổi creds sang sessions mới (đổi IP). Giữ TTL còn lại, xóa creds cũ.',
+        body: '{ "iuser_id":"user-1", "cred_ids":[1,2] }' },
+      { method: 'GET', path: '/api/v1/user-creds?iuser_id=xxx', desc: 'Liệt kê tất cả creds active của 1 iuser_id kèm thông tin proxy connection.' },
+      { method: 'POST', path: '/api/v1/release', desc: 'Xóa toàn bộ creds của 1 iuser_id (trả sessions cho người khác).',
+        body: '{ "iuser_id":"user-1" }',
+        resp: '{ "iuser_id":"user-1", "released":3 }' },
+      { method: 'POST', path: '/api/v1/extend', desc: 'Gia hạn TTL cho tất cả creds active của 1 iuser_id.',
+        body: '{ "iuser_id":"user-1", "ttl":7200 }' },
+      { method: 'GET', path: '/api/v1/claim/status', desc: 'Tổng quan capacity: sessions connected, active users, claimed creds.' },
+      { method: 'GET', path: '/api/v1/claim/user-status?iuser_id=xxx', desc: 'Status chi tiết của 1 user: số creds active + danh sách creds.' },
+      { method: 'GET', path: '/api/v1/claim/users', desc: 'Danh sách tất cả iuser_id đang active: số creds, hết hạn sớm nhất.' },
+    ],
+  },
+  {
     group: 'Realtime (SSE)',
     items: [
       { method: 'GET', path: '/api/v1/events?token=<token>', desc: 'Luồng Server-Sent Events. Các sự kiện: session.status, session.public_ip, session.rotate, proxy.cred_changed, proxy.started, proxy.stopped. Keepalive mỗi 15 giây.',
