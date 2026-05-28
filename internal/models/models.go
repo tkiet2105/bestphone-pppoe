@@ -14,7 +14,11 @@ type Line struct {
 	Password    string    `gorm:"size:256" json:"password"` // ISP PPPoE password
 	UseMacvlan  bool      `gorm:"default:false" json:"use_macvlan"`
 	MaxSessions int       `gorm:"default:8" json:"max_sessions"`
-	CreatedAt   time.Time `json:"created_at"`
+	// CustomMacs — danh sách MAC user tự cấp (mỗi MAC 1 dòng, format
+	// "aa:bb:cc:dd:ee:ff"). Khi tạo session, system pick MAC chưa dùng từ
+	// pool này; nếu hết hoặc field rỗng → sinh ngẫu nhiên.
+	CustomMacs string    `gorm:"type:text" json:"custom_macs"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 const (
@@ -47,6 +51,56 @@ func MaxCredsForType(t string) int {
 // IsValidSessionType — kiểm tra type hợp lệ.
 func IsValidSessionType(t string) bool {
 	return t == SessionTypeStatic || t == SessionTypePrivate || t == SessionTypeRotating
+}
+
+// ParseMacs — tách chuỗi MAC pool (newline/comma/space separated) thành slice
+// đã chuẩn hóa lowercase + bỏ entry rỗng. Không validate format ở đây.
+func ParseMacs(s string) []string {
+	if s == "" {
+		return nil
+	}
+	out := make([]string, 0)
+	cur := make([]byte, 0, 17)
+	flush := func() {
+		if len(cur) > 0 {
+			out = append(out, string(cur))
+			cur = cur[:0]
+		}
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\n' || c == '\r' || c == ',' || c == ' ' || c == '\t' {
+			flush()
+			continue
+		}
+		// lowercase ASCII
+		if c >= 'A' && c <= 'Z' {
+			c = c + 32
+		}
+		cur = append(cur, c)
+	}
+	flush()
+	return out
+}
+
+// IsValidMac — kiểm tra format "aa:bb:cc:dd:ee:ff" (6 octet hex, separator :).
+func IsValidMac(m string) bool {
+	if len(m) != 17 {
+		return false
+	}
+	for i := 0; i < 17; i++ {
+		c := m[i]
+		if i%3 == 2 {
+			if c != ':' {
+				return false
+			}
+			continue
+		}
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 type Session struct {

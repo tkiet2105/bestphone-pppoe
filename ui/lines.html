@@ -98,6 +98,7 @@
       <table id="lines-table">
         <thead><tr>
           <th>ID</th><th>Tên</th><th>Cổng mạng</th><th>Tài khoản ISP</th><th>Mỗi session 1 MAC?</th>
+          <th>MAC pool</th>
           <th>Số session tối đa</th><th>Đang chạy</th><th class="actions">Hành động</th>
         </tr></thead>
         <tbody></tbody>
@@ -129,6 +130,12 @@
         </select>
       </div>
       <div class="form-row"><label>Số session tối đa cho line này</label><input type="number" id="nl-max" value="8"></div>
+      <div class="form-row"><label>Danh sách MAC tự cấp <span class="muted small">(tùy chọn, 1 MAC/dòng)</span></label>
+        <textarea id="nl-macs" rows="4" placeholder="aa:bb:cc:dd:ee:01&#10;aa:bb:cc:dd:ee:02&#10;..." style="font-family:monospace;font-size:12px"></textarea>
+        <div class="muted small" style="margin-top:4px">
+          Mỗi session sẽ pick MAC chưa dùng từ pool này. Hết pool → tự sinh ngẫu nhiên. Bỏ trống = luôn sinh ngẫu nhiên.
+        </div>
+      </div>
       <div class="actions">
         <button class="secondary" onclick="closeModal('create-line-modal')">Hủy</button>
         <button onclick="submitCreateLine()">Tạo</button>

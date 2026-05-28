@@ -268,7 +268,8 @@ Bỏ trống → probe tất cả NIC up + có carrier.
   "username": "fbr00chgt@vnn",
   "password": "3b4r7U5L",
   "use_macvlan": true,
-  "max_sessions": 32
+  "max_sessions": 32,
+  "custom_macs": "aa:bb:cc:dd:ee:01\naa:bb:cc:dd:ee:02"
 }
 ```
 
@@ -280,8 +281,12 @@ Bỏ trống → probe tất cả NIC up + có carrier.
 | password | string | optional | |
 | use_macvlan | bool | optional | mặc định false |
 | max_sessions | int | optional | mặc định 8 |
+| custom_macs | string | optional | Pool MAC user tự cấp, 1 MAC/dòng (cũng accept `,` hoặc space separator). Khi tạo session, system pick MAC chưa dùng từ pool; hết pool hoặc rỗng → tự sinh ngẫu nhiên. Format: `aa:bb:cc:dd:ee:ff` (lowercase, có `:`, 6 octet hex). Duplicate được tự lọc. |
 
 **Success 200** `data` = [Line object](#line-object)
+
+**Errors**:
+- `400 "MAC không hợp lệ: \"<X>\" (cần format aa:bb:cc:dd:ee:ff)"` — validate fail
 
 ### GET /api/v1/lines
 
@@ -297,10 +302,13 @@ Bỏ trống → probe tất cả NIC up + có carrier.
 
 **Body** (tất cả optional, pointer):
 ```json
-{ "name": "...", "username": "...", "password": "...", "use_macvlan": true, "max_sessions": 16 }
+{ "name": "...", "username": "...", "password": "...", "use_macvlan": true, "max_sessions": 16, "custom_macs": "aa:bb:cc:dd:ee:01\naa:bb:cc:dd:ee:02" }
 ```
 
 **Success 200** `data` = Line updated
+
+**Errors**:
+- `400 "MAC không hợp lệ: ..."` — nếu `custom_macs` có entry sai format
 
 ### POST /api/v1/lines/:id/delete
 
@@ -984,9 +992,12 @@ Stream `journalctl` của backend hoặc pppd.
   "password": "3b4r7U5L",
   "use_macvlan": true,
   "max_sessions": 32,
+  "custom_macs": "aa:bb:cc:dd:ee:01\naa:bb:cc:dd:ee:02",
   "created_at": "2026-05-27T10:00:00Z"
 }
 ```
+
+`custom_macs`: pool MAC newline-separated; `""` = auto random cho mọi session.
 
 ### Session object
 ```json

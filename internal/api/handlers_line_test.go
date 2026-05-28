@@ -154,3 +154,78 @@ func TestGetLine_NotFound(t *testing.T) {
 func uid(n uint) string {
 	return fmt.Sprintf("%d", n)
 }
+
+// ---------- CustomMacs tests ----------
+
+func TestCreateLine_WithCustomMacs(t *testing.T) {
+	r := setupRouter(t)
+	tok := testutil.SeedToken(t)
+	r.POST("/api/v1/lines", BearerAuth(), CreateLine)
+
+	body := map[string]any{
+		"name": "L-mac", "iface": "eth-mac",
+		"custom_macs": "AA:BB:CC:DD:EE:01\naa:bb:cc:dd:ee:02\naa:bb:cc:dd:ee:01\n", // có duplicate + uppercase
+	}
+	w := testutil.DoJSON(t, r, "POST", "/api/v1/lines", body, tok)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	resp := testutil.ParseResponse(t, w)
+	var line models.Line
+	json.Unmarshal(resp.Data, &line)
+	// Normalize: lowercase + dedup → 2 dòng
+	wantLines := []string{"aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"}
+	got := models.ParseMacs(line.CustomMacs)
+	if len(got) != len(wantLines) {
+		t.Fatalf("expected %d MACs, got %d (%v)", len(wantLines), len(got), got)
+	}
+	for i, w := range wantLines {
+		if got[i] != w {
+			t.Errorf("expected MAC[%d]=%s, got %s", i, w, got[i])
+		}
+	}
+}
+
+func TestCreateLine_InvalidMacFormat(t *testing.T) {
+	r := setupRouter(t)
+	tok := testutil.SeedToken(t)
+	r.POST("/api/v1/lines", BearerAuth(), CreateLine)
+
+	body := map[string]any{
+		"name": "L-bad", "iface": "eth-bad",
+		"custom_macs": "not-a-mac",
+	}
+	w := testutil.DoJSON(t, r, "POST", "/api/v1/lines", body, tok)
+	if w.Code != 400 {
+		t.Fatalf("expected 400 (invalid MAC), got %d", w.Code)
+	}
+}
+
+func TestParseMacs(t *testing.T) {
+	got := models.ParseMacs("aa:bb:cc:dd:ee:01\nbb:cc:dd:ee:ff:02 , cc:dd:ee:ff:00:03")
+	want := []string{"aa:bb:cc:dd:ee:01", "bb:cc:dd:ee:ff:02", "cc:dd:ee:ff:00:03"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d, got %d (%v)", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d] want %s, got %s", i, want[i], got[i])
+		}
+	}
+}
+
+func TestIsValidMac(t *testing.T) {
+	cases := map[string]bool{
+		"aa:bb:cc:dd:ee:ff": true,
+		"AA:BB:CC:DD:EE:FF": false, // require lowercase (ParseMacs normalizes first)
+		"aabbccddeeff":      false,
+		"aa:bb:cc:dd:ee":    false,
+		"aa-bb-cc-dd-ee-ff": false,
+		"":                  false,
+	}
+	for in, want := range cases {
+		if got := models.IsValidMac(in); got != want {
+			t.Errorf("IsValidMac(%q) = %v, want %v", in, got, want)
+		}
+	}
+}

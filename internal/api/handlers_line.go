@@ -1,7 +1,9 @@
 package api
 
 import (
+	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -18,6 +20,29 @@ type createLineReq struct {
 	Password    string `json:"password"`
 	UseMacvlan  bool   `json:"use_macvlan"`
 	MaxSessions int    `json:"max_sessions"`
+	CustomMacs  string `json:"custom_macs"` // 1 MAC/dòng, format aa:bb:cc:dd:ee:ff
+}
+
+// normalizeAndValidateMacs — parse pool, validate từng entry, trả về chuỗi
+// đã chuẩn hóa (1 MAC/dòng, lowercase, no dup) hoặc lỗi đầu tiên gặp phải.
+func normalizeAndValidateMacs(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "", nil
+	}
+	macs := models.ParseMacs(raw)
+	seen := make(map[string]bool, len(macs))
+	out := make([]string, 0, len(macs))
+	for _, m := range macs {
+		if !models.IsValidMac(m) {
+			return "", fmt.Errorf("MAC không hợp lệ: %q (cần format aa:bb:cc:dd:ee:ff)", m)
+		}
+		if seen[m] {
+			continue
+		}
+		seen[m] = true
+		out = append(out, m)
+	}
+	return strings.Join(out, "\n"), nil
 }
 
 func CreateLine(c *gin.Context) {
@@ -29,6 +54,11 @@ func CreateLine(c *gin.Context) {
 	if req.MaxSessions <= 0 {
 		req.MaxSessions = 8
 	}
+	normalizedMacs, err := normalizeAndValidateMacs(req.CustomMacs)
+	if err != nil {
+		fail(c, 400, err.Error())
+		return
+	}
 	line := models.Line{
 		Name:        req.Name,
 		Iface:       req.Iface,
@@ -36,6 +66,7 @@ func CreateLine(c *gin.Context) {
 		Password:    req.Password,
 		UseMacvlan:  req.UseMacvlan,
 		MaxSessions: req.MaxSessions,
+		CustomMacs:  normalizedMacs,
 	}
 	if err := db.DB.Create(&line).Error; err != nil {
 		fail(c, 500, err.Error())
@@ -50,6 +81,7 @@ type updateLineReq struct {
 	Password    *string `json:"password"`
 	UseMacvlan  *bool   `json:"use_macvlan"`
 	MaxSessions *int    `json:"max_sessions"`
+	CustomMacs  *string `json:"custom_macs"`
 }
 
 func UpdateLine(c *gin.Context) {
@@ -78,6 +110,14 @@ func UpdateLine(c *gin.Context) {
 	}
 	if req.MaxSessions != nil {
 		line.MaxSessions = *req.MaxSessions
+	}
+	if req.CustomMacs != nil {
+		normalized, err := normalizeAndValidateMacs(*req.CustomMacs)
+		if err != nil {
+			fail(c, 400, err.Error())
+			return
+		}
+		line.CustomMacs = normalized
 	}
 	db.DB.Save(&line)
 	ok(c, line)

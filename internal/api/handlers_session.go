@@ -35,6 +35,34 @@ func randMacGo() string {
 	return fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", b[0], b[1], b[2], b[3], b[4])
 }
 
+// pickCustomMacOrRandom — nếu line có CustomMacs, chọn MAC chưa được session
+// nào của line này dùng. Hết pool hoặc rỗng → fallback random LAA.
+// Caller phải nắm allocMu để bảo vệ race condition (sinh + insert session).
+func pickCustomMacOrRandom(line models.Line) string {
+	pool := models.ParseMacs(line.CustomMacs)
+	if len(pool) == 0 {
+		return randMacGo()
+	}
+	// MAC đã dùng bởi session khác CỦA CÙNG LINE
+	var used []string
+	db.DB.Model(&models.Session{}).
+		Where("line_id = ? AND mac != ''", line.Id).
+		Pluck("mac", &used)
+	usedSet := make(map[string]bool, len(used))
+	for _, m := range used {
+		// normalize lowercase
+		lo := strings.ToLower(m)
+		usedSet[lo] = true
+	}
+	for _, m := range pool {
+		if !usedSet[m] {
+			return m
+		}
+	}
+	// Pool đã hết → fallback random
+	return randMacGo()
+}
+
 // proxyAuthReq — mirror Mode 2 createSessionReq.ProxyAuth.
 type proxyAuthReq struct {
 	Mode     string `json:"mode"`     // "random" | "manual" | "none"
@@ -185,7 +213,7 @@ func createSessionAndDial(line models.Line, req createSessionReq) (*models.Sessi
 
 	mac := ""
 	if line.UseMacvlan {
-		mac = randMacGo()
+		mac = pickCustomMacOrRandom(line)
 	}
 
 	allocMu.Lock()

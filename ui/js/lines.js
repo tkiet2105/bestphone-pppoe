@@ -128,13 +128,19 @@ async function loadLines() {
   try {
     const rows = await Api.listLines();
     const tbody = document.querySelector('#lines-table tbody');
-    tbody.innerHTML = rows.map(r => `
+    tbody.innerHTML = rows.map(r => {
+      const macList = (r.custom_macs || '').split('\n').map(s => s.trim()).filter(Boolean);
+      const macCell = macList.length > 0
+        ? `<span class="mono small" title="${escapeHTML(macList.join('\n'))}">${macList.length} MAC</span>`
+        : '<span class="muted small">auto</span>';
+      return `
       <tr>
         <td>${r.id}</td>
         <td>${escapeHTML(r.name)}</td>
         <td class="mono">${escapeHTML(r.iface)}</td>
         <td class="mono small">${r.username ? escapeHTML(r.username) : '<span class="muted">(chưa nhập)</span>'}</td>
         <td>${r.use_macvlan ? '✓' : '—'}</td>
+        <td>${macCell}</td>
         <td>${r.max_sessions}</td>
         <td>${r.session_count}</td>
         <td class="actions">
@@ -144,8 +150,8 @@ async function loadLines() {
           &nbsp;|&nbsp;
           <a href="#" onclick="event.preventDefault();deleteLine(${r.id},'${escapeHTML(r.name)}')" title="Xóa đường truyền" style="color:#fca5a5">✕ Xóa</a>
         </td>
-      </tr>
-    `).join('') || '<tr><td colspan="8" class="muted">Chưa có đường truyền nào. Bấm "⊕ Tạo đường truyền mới" để bắt đầu.</td></tr>';
+      </tr>`;
+    }).join('') || '<tr><td colspan="9" class="muted">Chưa có đường truyền nào. Bấm "⊕ Tạo đường truyền mới" để bắt đầu.</td></tr>';
   } catch (e) {
     Toast.error('Lỗi tải danh sách: ' + e.message);
   }
@@ -160,6 +166,7 @@ async function submitCreateLine() {
     password: document.getElementById('nl-pass').value.trim(),
     use_macvlan: document.getElementById('nl-macvlan').value === 'true',
     max_sessions: parseInt(document.getElementById('nl-max').value) || 8,
+    custom_macs: document.getElementById('nl-macs').value.trim(),
   };
   if (!data.name || !data.iface) { Toast.error('Tên + cổng mạng là bắt buộc'); return; }
   if (!data.username || !data.password) {
@@ -190,11 +197,33 @@ async function editLine(id) {
   if (newUser === null) return;
   const newPass = await Dialog.prompt(
     `Sửa mật khẩu ISP cho đường truyền <b>${escapeHTML(l.name)}</b> (để trống nếu không đổi mật khẩu):`,
-    { title: 'Sửa mật khẩu ISP', defaultValue: l.password || '', password: true, okText: 'Lưu' }
+    { title: 'Sửa mật khẩu ISP', defaultValue: l.password || '', password: true, okText: 'Tiếp tục' }
   );
   if (newPass === null) return;
+
+  // MAC pool — dùng Dialog.show với textarea (Dialog.prompt chỉ là input).
+  let macsValue = l.custom_macs || '';
+  const macAction = await Dialog.show({
+    title: 'Danh sách MAC tự cấp',
+    bodyHTML: `<label style="display:block;margin-bottom:4px">1 MAC/dòng, format <span class="mono">aa:bb:cc:dd:ee:ff</span>. Để trống = auto random.</label>
+      <textarea id="el-macs" rows="6" style="width:100%;font-family:monospace;font-size:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:6px">${escapeHTML(macsValue)}</textarea>`,
+    actions: [
+      { label: 'Hủy', kind: 'secondary', value: null },
+      { label: 'Lưu', kind: 'primary', value: 'SAVE' },
+    ],
+    dismissValue: null,
+    onMount: (bg) => {
+      const ta = bg.querySelector('#el-macs');
+      if (ta) {
+        ta.focus();
+        ta.addEventListener('input', () => { macsValue = ta.value; });
+      }
+    },
+  });
+  if (macAction === null) return;
+
   try {
-    await Api.updateLine(id, { username: newUser, password: newPass });
+    await Api.updateLine(id, { username: newUser, password: newPass, custom_macs: macsValue.trim() });
     Toast.success('Đã cập nhật');
     loadLines();
   } catch (e) { Toast.error(e.message); }
