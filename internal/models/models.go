@@ -24,6 +24,31 @@ const (
 	StatusError        = "error"
 )
 
+// Session type: phân biệt để claim đúng và giới hạn max creds/session.
+// Mọi chức năng (rotate, change, ...) đều giống nhau giữa 3 type.
+const (
+	SessionTypeStatic   = "static"   // tĩnh, max 5 user
+	SessionTypePrivate  = "private"  // riêng, max 1 user
+	SessionTypeRotating = "rotating" // xoay, max 5 user
+)
+
+// MaxCredsForType — max active creds (đã claim) cho 1 session theo type.
+func MaxCredsForType(t string) int {
+	switch t {
+	case SessionTypePrivate:
+		return 1
+	case SessionTypeStatic, SessionTypeRotating:
+		return 5
+	default:
+		return 5
+	}
+}
+
+// IsValidSessionType — kiểm tra type hợp lệ.
+func IsValidSessionType(t string) bool {
+	return t == SessionTypeStatic || t == SessionTypePrivate || t == SessionTypeRotating
+}
+
 type Session struct {
 	Id                uint       `gorm:"primaryKey" json:"id"`
 	LineId            uint       `gorm:"index;not null" json:"line_id"`
@@ -32,6 +57,7 @@ type Session struct {
 	Username          string     `gorm:"size:128;not null" json:"username"`
 	Password          string     `gorm:"size:256;not null" json:"password"`
 	MAC               string     `gorm:"size:32;index" json:"mac"`
+	Type              string     `gorm:"size:16;index;default:'rotating'" json:"type"` // static | private | rotating
 	Status            string     `gorm:"size:16;default:'disconnected'" json:"status"`
 	IP                string     `gorm:"size:64" json:"ip"`
 	PublicIP          string     `gorm:"size:64" json:"public_ip"`

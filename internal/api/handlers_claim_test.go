@@ -365,3 +365,121 @@ func TestClaimUserStatus(t *testing.T) {
 		t.Errorf("expected 3 creds, got %d", len(result.Credentials))
 	}
 }
+
+// ---------- Type-based tests ----------
+
+func seedSessionsWithType(t *testing.T, count int, sessType string, startUnit, startPort int) {
+	t.Helper()
+	line := testutil.SeedLine(t)
+	for i := 0; i < count; i++ {
+		sess := models.Session{
+			LineId: line.Id, PppUnit: startUnit + i, Username: "isp", Password: "pass",
+			Type:   sessType,
+			Status: models.StatusConnected, IP: "10.0.0." + uid(uint(i+1)),
+		}
+		db.DB.Create(&sess)
+		proxy := models.Proxy{SessionId: sess.Id, Port: startPort + i, Status: "running"}
+		db.DB.Create(&proxy)
+	}
+}
+
+func TestClaim_TypeFilter(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedSessionsWithType(t, 2, models.SessionTypeStatic, 100, 58000)
+	seedSessionsWithType(t, 3, models.SessionTypeRotating, 200, 58100)
+
+	body := map[string]any{"iuser_id": "u-type", "count": 2, "type": "static"}
+	w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", body, rk.Tok)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	resp := testutil.ParseResponse(t, w)
+	var cr claimResponse
+	json.Unmarshal(resp.Data, &cr)
+	for _, c := range cr.Credentials {
+		if c.Type != "static" {
+			t.Errorf("expected static, got %s", c.Type)
+		}
+	}
+}
+
+func TestClaim_InvalidType(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedConnectedSessions(t, 2)
+	body := map[string]any{"iuser_id": "u-bad", "count": 1, "type": "invalid"}
+	w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", body, rk.Tok)
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestClaim_PrivateMax1User(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedSessionsWithType(t, 2, models.SessionTypePrivate, 300, 58200)
+
+	// User 1 claim 2 private sessions → ok
+	body := map[string]any{"iuser_id": "u-priv-1", "count": 2, "type": "private"}
+	w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", body, rk.Tok)
+	if w.Code != 200 {
+		t.Fatalf("user1 expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// User 2 cũng đòi 1 cred private → fail vì cả 2 session private đã hết slot (max=1).
+	body2 := map[string]any{"iuser_id": "u-priv-2", "count": 1, "type": "private"}
+	w2 := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", body2, rk.Tok)
+	if w2.Code != 400 {
+		t.Fatalf("user2 expected 400 (private slots exhausted), got %d", w2.Code)
+	}
+}
+
+func TestClaim_StaticMax5Users(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedSessionsWithType(t, 1, models.SessionTypeStatic, 400, 58300)
+
+	// 5 user khác nhau, mỗi user claim 1 cred type=static → tất cả share cùng 1 session.
+	for i := 1; i <= 5; i++ {
+		body := map[string]any{"iuser_id": fmt.Sprintf("u-s-%d", i), "count": 1, "type": "static"}
+		w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", body, rk.Tok)
+		if w.Code != 200 {
+			t.Fatalf("user %d expected 200, got %d: %s", i, w.Code, w.Body.String())
+		}
+	}
+
+	// User 6 → fail
+	body := map[string]any{"iuser_id": "u-s-6", "count": 1, "type": "static"}
+	w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", body, rk.Tok)
+	if w.Code != 400 {
+		t.Fatalf("user 6 expected 400 (static slots exhausted at 5), got %d", w.Code)
+	}
+}
+
+func TestChange_PreservesType(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedSessionsWithType(t, 3, models.SessionTypeStatic, 500, 58400)
+
+	// Claim 1 static
+	body := map[string]any{"iuser_id": "u-chg-type", "count": 1, "type": "static"}
+	w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", body, rk.Tok)
+	resp := testutil.ParseResponse(t, w)
+	var cr claimResponse
+	json.Unmarshal(resp.Data, &cr)
+	if len(cr.Credentials) != 1 {
+		t.Fatalf("expected 1 claimed, got %d", len(cr.Credentials))
+	}
+
+	// Change → cred mới phải vẫn type=static
+	chBody := map[string]any{
+		"iuser_id": "u-chg-type",
+		"cred_ids": []uint{cr.Credentials[0].CredId},
+	}
+	w2 := testutil.DoJSON(t, rk.R, "POST", "/api/v1/change", chBody, rk.Tok)
+	if w2.Code != 200 {
+		t.Fatalf("change expected 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+	resp2 := testutil.ParseResponse(t, w2)
+	var cr2 claimResponse
+	json.Unmarshal(resp2.Data, &cr2)
+	if cr2.Credentials[0].Type != "static" {
+		t.Errorf("change should preserve type, got %s", cr2.Credentials[0].Type)
+	}
+}

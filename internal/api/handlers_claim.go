@@ -18,6 +18,7 @@ type credResponse struct {
 	CredId    uint       `json:"cred_id"`
 	ProxyId   uint       `json:"proxy_id"`
 	SessionId uint       `json:"session_id"`
+	Type      string     `json:"type"`
 	IP        string     `json:"ip"`
 	Port      int        `json:"port"`
 	Username  string     `json:"username"`
@@ -31,6 +32,34 @@ func activeCredsForUser(iuserid string) []models.ProxyCredential {
 	db.DB.Where("i_user_id = ? AND enabled = ? AND (expires_at IS NULL OR expires_at > ?)",
 		iuserid, true, now).Find(&creds)
 	return creds
+}
+
+// activeCredsForUserByType — chỉ trả creds thuộc session.type = sessType.
+func activeCredsForUserByType(iuserid, sessType string) []models.ProxyCredential {
+	all := activeCredsForUser(iuserid)
+	if sessType == "" {
+		return all
+	}
+	out := make([]models.ProxyCredential, 0, len(all))
+	for _, cr := range all {
+		if credSessionType(cr.ProxyId) == sessType {
+			out = append(out, cr)
+		}
+	}
+	return out
+}
+
+// credSessionType — lookup session.Type qua proxy_id. Empty nếu không tìm thấy.
+func credSessionType(proxyId uint) string {
+	var p models.Proxy
+	if db.DB.First(&p, proxyId).Error != nil {
+		return ""
+	}
+	var s models.Session
+	if db.DB.First(&s, p.SessionId).Error != nil {
+		return ""
+	}
+	return s.Type
 }
 
 func buildCredResponses(creds []models.ProxyCredential) []credResponse {
@@ -52,6 +81,7 @@ func buildCredResponses(creds []models.ProxyCredential) []credResponse {
 			CredId:    cr.Id,
 			ProxyId:   p.Id,
 			SessionId: s.Id,
+			Type:      s.Type,
 			IP:        ip,
 			Port:      p.Port,
 			Username:  cr.Username,
@@ -62,15 +92,40 @@ func buildCredResponses(creds []models.ProxyCredential) []credResponse {
 	return out
 }
 
-func availableProxies(excludeProxyIds []uint, count int) []models.Proxy {
-	var proxies []models.Proxy
+// availableProxiesForType — proxies running, session connected, type khớp, còn slot
+// theo MaxCredsForType(session.type) và không nằm trong excludeProxyIds.
+func availableProxiesForType(excludeProxyIds []uint, count int, sessType string) []models.Proxy {
+	var candidates []models.Proxy
 	q := db.DB.Joins("JOIN sessions ON sessions.id = proxies.session_id").
 		Where("sessions.status = ? AND proxies.status = ?", models.StatusConnected, "running")
+	if sessType != "" {
+		q = q.Where("sessions.type = ?", sessType)
+	}
 	if len(excludeProxyIds) > 0 {
 		q = q.Where("proxies.id NOT IN ?", excludeProxyIds)
 	}
-	q.Limit(count).Find(&proxies)
-	return proxies
+	q.Find(&candidates)
+
+	out := make([]models.Proxy, 0, count)
+	now := time.Now()
+	for _, p := range candidates {
+		var s models.Session
+		if db.DB.First(&s, p.SessionId).Error != nil {
+			continue
+		}
+		max := models.MaxCredsForType(s.Type)
+		var cur int64
+		db.DB.Model(&models.ProxyCredential{}).
+			Where("proxy_id = ? AND enabled = ? AND (expires_at IS NULL OR expires_at > ?)", p.Id, true, now).
+			Count(&cur)
+		if int(cur) < max {
+			out = append(out, p)
+			if len(out) >= count {
+				break
+			}
+		}
+	}
+	return out
 }
 
 func claimRandHex(n int) string {
@@ -84,6 +139,7 @@ var claimMu sync.Mutex
 type claimReq struct {
 	IUserId string `json:"iuser_id" binding:"required"`
 	Count   int    `json:"count" binding:"required"`
+	Type    string `json:"type"` // static | private | rotating (default rotating)
 	Ttl     int    `json:"ttl"`
 }
 
@@ -97,26 +153,42 @@ func ClaimCredentials(c *gin.Context) {
 		fail(c, 400, "count phải >= 1")
 		return
 	}
+	sessType := req.Type
+	if sessType == "" {
+		sessType = models.SessionTypeRotating
+	}
+	if !models.IsValidSessionType(sessType) {
+		fail(c, 400, "type phải là static|private|rotating")
+		return
+	}
 
 	claimMu.Lock()
 	defer claimMu.Unlock()
 
-	existing := activeCredsForUser(req.IUserId)
+	existingAll := activeCredsForUser(req.IUserId)
+	existing := make([]models.ProxyCredential, 0, len(existingAll))
+	for _, cr := range existingAll {
+		if credSessionType(cr.ProxyId) == sessType {
+			existing = append(existing, cr)
+		}
+	}
+
 	if len(existing) >= req.Count {
-		ok(c, gin.H{"iuser_id": req.IUserId, "credentials": buildCredResponses(existing[:req.Count])})
+		ok(c, gin.H{"iuser_id": req.IUserId, "type": sessType, "credentials": buildCredResponses(existing[:req.Count])})
 		return
 	}
 
 	need := req.Count - len(existing)
-	usedProxyIds := make([]uint, 0, len(existing))
-	for _, cr := range existing {
+	// Exclude proxies user đã có cred (mọi type) để không trùng session per-user.
+	usedProxyIds := make([]uint, 0, len(existingAll))
+	for _, cr := range existingAll {
 		usedProxyIds = append(usedProxyIds, cr.ProxyId)
 	}
 
-	proxies := availableProxies(usedProxyIds, need)
+	proxies := availableProxiesForType(usedProxyIds, need, sessType)
 	if len(proxies) < need {
-		fail(c, 400, fmt.Sprintf("không đủ sessions: đã có %d creds, cần thêm %d, chỉ còn %d sessions trống",
-			len(existing), need, len(proxies)))
+		fail(c, 400, fmt.Sprintf("không đủ sessions type=%s: đã có %d creds, cần thêm %d, chỉ còn %d slot",
+			sessType, len(existing), need, len(proxies)))
 		return
 	}
 
@@ -146,7 +218,7 @@ func ClaimCredentials(c *gin.Context) {
 	}
 
 	all := append(existing, newCreds...)
-	ok(c, gin.H{"iuser_id": req.IUserId, "credentials": buildCredResponses(all)})
+	ok(c, gin.H{"iuser_id": req.IUserId, "type": sessType, "credentials": buildCredResponses(all)})
 }
 
 type changeReq struct {
@@ -181,15 +253,23 @@ func ChangeCredentials(c *gin.Context) {
 		usedProxyIds = append(usedProxyIds, cr.ProxyId)
 	}
 
-	proxies := availableProxies(usedProxyIds, len(oldCreds))
-	if len(proxies) < len(oldCreds) {
-		fail(c, 400, "không đủ sessions khả dụng để đổi")
-		return
-	}
-
 	now := time.Now()
 	newCreds := make([]models.ProxyCredential, 0, len(oldCreds))
-	for i, old := range oldCreds {
+
+	// Per-cred: tìm thay thế cùng type. Sau mỗi lần allocate, thêm proxy mới vào
+	// usedProxyIds để tránh các vòng sau pick lại.
+	for _, old := range oldCreds {
+		sessType := credSessionType(old.ProxyId)
+		if sessType == "" {
+			fail(c, 500, fmt.Sprintf("không xác định được type cho cred #%d", old.Id))
+			return
+		}
+		fresh := availableProxiesForType(usedProxyIds, 1, sessType)
+		if len(fresh) == 0 {
+			fail(c, 400, fmt.Sprintf("không đủ sessions type=%s khả dụng để đổi cho cred #%d", sessType, old.Id))
+			return
+		}
+
 		var expPtr *time.Time
 		if old.ExpiresAt != nil {
 			remaining := old.ExpiresAt.Sub(now)
@@ -200,7 +280,7 @@ func ChangeCredentials(c *gin.Context) {
 		}
 
 		cr := models.ProxyCredential{
-			ProxyId:   proxies[i].Id,
+			ProxyId:   fresh[0].Id,
 			Label:     "claim",
 			Username:  "u" + claimRandHex(4),
 			Password:  claimRandHex(8),
@@ -212,13 +292,14 @@ func ChangeCredentials(c *gin.Context) {
 			fail(c, 500, err.Error())
 			return
 		}
-		proxysrv.M.ReloadCreds(proxies[i].Id)
+		proxysrv.M.ReloadCreds(fresh[0].Id)
 
 		oldProxyId := old.ProxyId
 		db.DB.Delete(&old)
 		proxysrv.M.ReloadCreds(oldProxyId)
 
 		newCreds = append(newCreds, cr)
+		usedProxyIds = append(usedProxyIds, fresh[0].Id)
 	}
 
 	ok(c, gin.H{"iuser_id": req.IUserId, "credentials": buildCredResponses(newCreds)})
@@ -230,12 +311,18 @@ func ListUserCreds(c *gin.Context) {
 		fail(c, 400, "thiếu query param iuser_id")
 		return
 	}
-	creds := activeCredsForUser(iuserid)
-	ok(c, gin.H{"iuser_id": iuserid, "credentials": buildCredResponses(creds)})
+	sessType := c.Query("type") // optional filter
+	if sessType != "" && !models.IsValidSessionType(sessType) {
+		fail(c, 400, "type phải là static|private|rotating")
+		return
+	}
+	creds := activeCredsForUserByType(iuserid, sessType)
+	ok(c, gin.H{"iuser_id": iuserid, "type": sessType, "credentials": buildCredResponses(creds)})
 }
 
 type releaseReq struct {
 	IUserId string `json:"iuser_id" binding:"required"`
+	Type    string `json:"type"` // optional — chỉ release creds thuộc type này
 }
 
 func ReleaseCredentials(c *gin.Context) {
@@ -244,27 +331,49 @@ func ReleaseCredentials(c *gin.Context) {
 		fail(c, 400, err.Error())
 		return
 	}
+	if req.Type != "" && !models.IsValidSessionType(req.Type) {
+		fail(c, 400, "type phải là static|private|rotating")
+		return
+	}
 
 	var creds []models.ProxyCredential
 	db.DB.Where("i_user_id = ?", req.IUserId).Find(&creds)
 
-	proxyIds := make(map[uint]bool)
-	for _, cr := range creds {
-		proxyIds[cr.ProxyId] = true
+	// Nếu có type filter → chỉ giữ những cred thuộc type đó.
+	if req.Type != "" {
+		filtered := make([]models.ProxyCredential, 0, len(creds))
+		for _, cr := range creds {
+			if credSessionType(cr.ProxyId) == req.Type {
+				filtered = append(filtered, cr)
+			}
+		}
+		creds = filtered
 	}
 
-	res := db.DB.Where("i_user_id = ?", req.IUserId).Delete(&models.ProxyCredential{})
+	proxyIds := make(map[uint]bool)
+	credIds := make([]uint, 0, len(creds))
+	for _, cr := range creds {
+		proxyIds[cr.ProxyId] = true
+		credIds = append(credIds, cr.Id)
+	}
+
+	var released int64
+	if len(credIds) > 0 {
+		res := db.DB.Where("id IN ?", credIds).Delete(&models.ProxyCredential{})
+		released = res.RowsAffected
+	}
 
 	for pid := range proxyIds {
 		proxysrv.M.ReloadCreds(pid)
 	}
 
-	ok(c, gin.H{"iuser_id": req.IUserId, "released": res.RowsAffected})
+	ok(c, gin.H{"iuser_id": req.IUserId, "type": req.Type, "released": released})
 }
 
 type extendReq struct {
 	IUserId string `json:"iuser_id" binding:"required"`
 	Ttl     int    `json:"ttl" binding:"required"`
+	Type    string `json:"type"` // optional — chỉ extend creds thuộc type này
 }
 
 func ClaimStatus(c *gin.Context) {
@@ -282,10 +391,38 @@ func ClaimStatus(c *gin.Context) {
 		Where("i_user_id != '' AND enabled = ? AND (expires_at IS NULL OR expires_at > ?)", true, now).
 		Distinct("i_user_id").Count(&activeUsers)
 
+	// breakdown by type
+	type typeStats struct {
+		Sessions       int64 `json:"sessions"`
+		ClaimedCreds   int64 `json:"claimed_creds"`
+		AvailableSlots int64 `json:"available_slots"`
+	}
+	byType := make(map[string]typeStats)
+	for _, t := range []string{models.SessionTypeStatic, models.SessionTypePrivate, models.SessionTypeRotating} {
+		var sessCount int64
+		db.DB.Model(&models.Session{}).Where("status = ? AND type = ?", models.StatusConnected, t).Count(&sessCount)
+
+		var claimedInType int64
+		db.DB.Model(&models.ProxyCredential{}).
+			Joins("JOIN proxies ON proxies.id = proxy_credentials.proxy_id").
+			Joins("JOIN sessions ON sessions.id = proxies.session_id").
+			Where("proxy_credentials.i_user_id != '' AND proxy_credentials.enabled = ? AND (proxy_credentials.expires_at IS NULL OR proxy_credentials.expires_at > ?) AND sessions.type = ?",
+				true, now, t).
+			Count(&claimedInType)
+
+		maxPerSess := int64(models.MaxCredsForType(t))
+		available := sessCount*maxPerSess - claimedInType
+		if available < 0 {
+			available = 0
+		}
+		byType[t] = typeStats{Sessions: sessCount, ClaimedCreds: claimedInType, AvailableSlots: available}
+	}
+
 	ok(c, gin.H{
 		"total_connected_sessions": totalSessions,
 		"active_users":             activeUsers,
 		"total_claimed_creds":      totalClaimed,
+		"by_type":                  byType,
 	})
 }
 
@@ -296,10 +433,24 @@ func ClaimUserStatus(c *gin.Context) {
 		return
 	}
 	creds := activeCredsForUser(iuserid)
+	resps := buildCredResponses(creds)
+
+	byType := map[string]int{
+		models.SessionTypeStatic:   0,
+		models.SessionTypePrivate:  0,
+		models.SessionTypeRotating: 0,
+	}
+	for _, r := range resps {
+		if _, ok := byType[r.Type]; ok {
+			byType[r.Type]++
+		}
+	}
+
 	ok(c, gin.H{
 		"iuser_id":     iuserid,
-		"active_creds": len(creds),
-		"credentials":  buildCredResponses(creds),
+		"active_creds": len(resps),
+		"by_type":      byType,
+		"credentials":  resps,
 	})
 }
 
@@ -316,7 +467,36 @@ func ClaimUsers(c *gin.Context) {
 		Where("i_user_id != '' AND enabled = ? AND (expires_at IS NULL OR expires_at > ?)", true, now).
 		Group("i_user_id").
 		Scan(&rows)
-	ok(c, rows)
+
+	// Đếm breakdown by type cho từng user.
+	type userOut struct {
+		IUserId        string         `json:"iuser_id"`
+		CredCount      int64          `json:"cred_count"`
+		EarliestExpiry *time.Time     `json:"earliest_expiry"`
+		ByType         map[string]int `json:"by_type"`
+	}
+	out := make([]userOut, 0, len(rows))
+	for _, r := range rows {
+		creds := activeCredsForUser(r.IUserId)
+		bt := map[string]int{
+			models.SessionTypeStatic:   0,
+			models.SessionTypePrivate:  0,
+			models.SessionTypeRotating: 0,
+		}
+		for _, cr := range creds {
+			t := credSessionType(cr.ProxyId)
+			if _, ok := bt[t]; ok {
+				bt[t]++
+			}
+		}
+		out = append(out, userOut{
+			IUserId:        r.IUserId,
+			CredCount:      r.CredCount,
+			EarliestExpiry: r.EarliestExpiry,
+			ByType:         bt,
+		})
+	}
+	ok(c, out)
 }
 
 func ExtendCredentials(c *gin.Context) {
@@ -329,8 +509,12 @@ func ExtendCredentials(c *gin.Context) {
 		fail(c, 400, "ttl phải > 0")
 		return
 	}
+	if req.Type != "" && !models.IsValidSessionType(req.Type) {
+		fail(c, 400, "type phải là static|private|rotating")
+		return
+	}
 
-	creds := activeCredsForUser(req.IUserId)
+	creds := activeCredsForUserByType(req.IUserId, req.Type)
 	if len(creds) == 0 {
 		fail(c, 404, "không tìm thấy credentials active cho iuser_id này")
 		return
@@ -343,6 +527,6 @@ func ExtendCredentials(c *gin.Context) {
 	}
 	db.DB.Model(&models.ProxyCredential{}).Where("id IN ?", ids).Update("expires_at", exp)
 
-	updated := activeCredsForUser(req.IUserId)
-	ok(c, gin.H{"iuser_id": req.IUserId, "credentials": buildCredResponses(updated)})
+	updated := activeCredsForUserByType(req.IUserId, req.Type)
+	ok(c, gin.H{"iuser_id": req.IUserId, "type": req.Type, "credentials": buildCredResponses(updated)})
 }

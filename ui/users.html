@@ -17,6 +17,9 @@
         <div><span class="muted small">Users active</span><br><strong id="st-users">—</strong></div>
         <div><span class="muted small">Creds claimed</span><br><strong id="st-creds">—</strong></div>
       </div>
+      <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap" id="type-breakdown">
+        <!-- per-type cards inserted via JS -->
+      </div>
     </div>
 
     <div class="card">
@@ -26,6 +29,11 @@
       <div class="row" style="gap:8px;flex-wrap:wrap">
         <input id="cl-iuserid" placeholder="iuser_id" style="max-width:200px">
         <input type="number" id="cl-count" value="1" min="1" max="100" style="max-width:100px" placeholder="Số creds">
+        <select id="cl-type" style="max-width:160px" title="Loại proxy">
+          <option value="rotating">Xoay (5 user)</option>
+          <option value="static">Tĩnh (5 user)</option>
+          <option value="private">Private (1 user)</option>
+        </select>
         <input type="number" id="cl-ttl" value="0" min="0" style="max-width:120px" placeholder="TTL (giây)">
         <button onclick="doClaim()">Claim</button>
       </div>
@@ -41,10 +49,11 @@
         <thead><tr>
           <th>IUser ID</th>
           <th>Số creds</th>
+          <th>Phân loại (Tĩnh / Private / Xoay)</th>
           <th>Hết hạn sớm nhất</th>
           <th class="actions">Hành động</th>
         </tr></thead>
-        <tbody><tr><td colspan="4" class="muted">(đang tải...)</td></tr></tbody>
+        <tbody><tr><td colspan="5" class="muted">(đang tải...)</td></tr></tbody>
       </table>
     </div>
 
@@ -62,6 +71,7 @@
         <thead><tr>
           <th>Cred ID</th>
           <th>Session</th>
+          <th>Loại</th>
           <th>IP:Port</th>
           <th>Username</th>
           <th>Password</th>

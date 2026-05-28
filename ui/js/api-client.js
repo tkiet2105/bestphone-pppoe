@@ -416,6 +416,17 @@ function statusBadge(s) {
   return `<span class="badge ${escapeHTML(s)}"><span class="badge-icon">${m.icon}</span>${escapeHTML(m.text)}</span>`;
 }
 
+// typeBadge — nhãn loại session (static/private/rotating).
+const TYPE_LABEL = {
+  static:   { icon: '◼', text: 'Tĩnh',    cls: 'static' },
+  private:  { icon: '★', text: 'Private', cls: 'private' },
+  rotating: { icon: '↻', text: 'Xoay',    cls: 'rotating' },
+};
+function typeBadge(t) {
+  const m = TYPE_LABEL[t] || TYPE_LABEL.rotating;
+  return `<span class="badge ${m.cls}" title="${escapeHTML(t || 'rotating')}"><span class="badge-icon">${m.icon}</span>${m.text}</span>`;
+}
+
 // ─── Button UX: ripple + async disable ───
 // 1. Global click listener: spawn ripple span tại vị trí click trên mọi <button>.
 // 2. Intercept onclick handler: nếu trả Promise → add .is-loading + disable cho đến khi resolve.

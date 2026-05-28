@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -12,6 +13,29 @@ import (
 	"github.com/tkiet2105/bestphone-pppoe/internal/models"
 	proxysrv "github.com/tkiet2105/bestphone-pppoe/internal/proxy/server"
 )
+
+// checkCredLimit — đảm bảo không vượt max creds (active) theo session.Type.
+// activeCount = creds enabled chưa hết hạn. addN = số creds sắp tạo thêm.
+func checkCredLimit(proxyId uint, addN int) error {
+	var p models.Proxy
+	if err := db.DB.First(&p, proxyId).Error; err != nil {
+		return fmt.Errorf("proxy không tồn tại")
+	}
+	var s models.Session
+	if err := db.DB.First(&s, p.SessionId).Error; err != nil {
+		return fmt.Errorf("session không tồn tại")
+	}
+	max := models.MaxCredsForType(s.Type)
+	var cur int64
+	now := time.Now()
+	db.DB.Model(&models.ProxyCredential{}).
+		Where("proxy_id = ? AND enabled = ? AND (expires_at IS NULL OR expires_at > ?)", proxyId, true, now).
+		Count(&cur)
+	if int(cur)+addN > max {
+		return fmt.Errorf("vượt giới hạn creds: session type=%s tối đa %d, đang có %d, thêm %d", s.Type, max, cur, addN)
+	}
+	return nil
+}
 
 func ListCreds(c *gin.Context) {
 	pid, _ := strconv.Atoi(c.Param("id"))
@@ -31,6 +55,10 @@ func CreateCred(c *gin.Context) {
 	pid, _ := strconv.Atoi(c.Param("id"))
 	var req createCredReq
 	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, 400, err.Error())
+		return
+	}
+	if err := checkCredLimit(uint(pid), 1); err != nil {
 		fail(c, 400, err.Error())
 		return
 	}
@@ -68,6 +96,10 @@ func BulkCreateCreds(c *gin.Context) {
 	}
 	if req.Count <= 0 || req.Count > 200 {
 		fail(c, 400, "count must be 1..200")
+		return
+	}
+	if err := checkCredLimit(uint(pid), req.Count); err != nil {
+		fail(c, 400, err.Error())
 		return
 	}
 	prefix := req.Prefix

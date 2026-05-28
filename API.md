@@ -319,6 +319,7 @@ Tạo 1 session.
 {
   "username": "fbr00chgt@vnn",
   "password": "3b4r7U5L",
+  "type": "rotating",
   "proxy_auth": {
     "mode": "random",
     "username": "manual_user",
@@ -326,6 +327,13 @@ Tạo 1 session.
   }
 }
 ```
+
+| Field | Type | Required | Note |
+|-------|------|----------|------|
+| username | string | optional | override line ISP cred |
+| password | string | optional | override line ISP cred |
+| type | string | optional | `static` \| `private` \| `rotating` (default `rotating`) |
+| proxy_auth | object | optional | xem bên dưới |
 
 `proxy_auth.mode`:
 - `"random"` (mặc định) — auto-gen `u<4hex>` / `<8hex>`
@@ -348,12 +356,13 @@ Tạo N session tuần tự (2s/lần) + 3 retry trên PADI timeout.
 
 **Body**:
 ```json
-{ "count": 32, "proxy_auth": { "mode": "random" } }
+{ "count": 32, "type": "rotating", "proxy_auth": { "mode": "random" } }
 ```
 
 | Field | Type | Required | Note |
 |-------|------|----------|------|
 | count | int | ✓ | 1..50 |
+| type | string | optional | `static` \| `private` \| `rotating` (default `rotating`); áp dụng cho mọi session tạo ra |
 | proxy_auth | object | optional | dùng chung cho mọi session |
 
 **Success 200** `data`:
@@ -373,6 +382,7 @@ Tạo N session tuần tự (2s/lần) + 3 retry trên PADI timeout.
 **Query** (tất cả optional):
 - `line_id` int — filter theo line
 - `status` string — filter theo status
+- `type` string — filter theo type (`static|private|rotating`)
 
 **Success 200** `data`: array Session với thêm fields:
 - `proxy_port` int
@@ -504,6 +514,9 @@ Export tất cả credentials sang text/JSON để import vào tool khác.
 
 **Success 200** `data` = ProxyCredential
 
+**Errors**:
+- `400 "vượt giới hạn creds: session type=<X> tối đa <N>, đang có <Y>, thêm <Z>"` — số creds active vượt max của type
+
 ### POST /api/v1/proxies/:id/credentials/bulk
 
 Tạo N creds random.
@@ -520,6 +533,10 @@ Tạo N creds random.
 | ttl | int | optional | |
 
 **Success 200** `data`: array ProxyCredential
+
+**Errors**:
+- `400 "count must be 1..200"`
+- `400 "vượt giới hạn creds: session type=<X> tối đa <N>, đang có <Y>, thêm <Z>"`
 
 ### PUT /api/v1/proxies/:id/credentials/:cid
 
@@ -548,30 +565,47 @@ System cho phép nhiều services/users (`iuser_id`) cùng claim creds từ pool
 - 1 session có thể cấp creds cho nhiều users khác nhau.
 - "Active cred" = `enabled=true AND (expires_at IS NULL OR expires_at > now)`.
 
+### Session types (loại proxy)
+
+Mỗi session có 1 trong 3 type. Type chỉ ảnh hưởng tới **giới hạn số user/session khi claim**, mọi chức năng (rotate/change) hoạt động giống nhau:
+
+| Type | Mô tả | Max user/session |
+|------|-------|-------------------|
+| `static` | Tĩnh — IP không đổi (admin tự quản lý rotate) | 5 |
+| `private` | Riêng — chỉ bán cho 1 user | 1 |
+| `rotating` | Xoay — IP có thể đổi | 5 |
+
+- Khi `POST /claim` với `type=X`, system chỉ pick session có `type=X` và còn slot (active creds < max).
+- Khi `POST /change`, cred mới được cấp trên session **cùng type** với cred cũ.
+- Khi `POST /proxies/:id/credentials` (admin tạo cred thủ công), số creds active không được vượt max của type.
+
 ### POST /api/v1/claim
 
-Claim N creds cho user.
+Claim N creds cho user. Mỗi cred được cấp trên 1 session khác nhau, type khớp với `type` request.
 
 **Body**:
 ```json
-{ "iuser_id": "user_abc", "count": 5, "ttl": 3600 }
+{ "iuser_id": "user_abc", "count": 5, "type": "rotating", "ttl": 3600 }
 ```
 
 | Field | Type | Required | Note |
 |-------|------|----------|------|
 | iuser_id | string | ✓ | external user/tenant id |
 | count | int | ✓ | >= 1 |
+| type | string | optional | `static` \| `private` \| `rotating` (default `rotating`) |
 | ttl | int | optional | giây; 0/missing = vĩnh viễn |
 
 **Success 200**:
 ```json
 {
   "iuser_id": "user_abc",
+  "type": "rotating",
   "credentials": [
     {
       "cred_id": 1001,
       "proxy_id": 50,
       "session_id": 100,
+      "type": "rotating",
       "ip": "14.224.245.142",
       "port": 30000,
       "username": "u1a2b",
@@ -584,13 +618,14 @@ Claim N creds cho user.
 
 **Errors**:
 - `400 "count phải >= 1"`
-- `400 "không đủ sessions: đã có X creds, cần thêm Y, chỉ còn Z sessions trống"`
+- `400 "type phải là static|private|rotating"`
+- `400 "không đủ sessions type=<X>: đã có Y creds, cần thêm Z, chỉ còn W slot"`
 
 **Concurrency**: Mutex `claimMu` — serialize với `/change`.
 
 ### POST /api/v1/change
 
-Đổi IP cho creds (xóa cũ, cấp mới trên session khác).
+Đổi IP cho creds (xóa cũ, cấp mới trên session khác, **cùng type** với cred cũ).
 
 **Body**:
 ```json
@@ -602,53 +637,77 @@ Claim N creds cho user.
 **Errors**:
 - `400 "cred_ids không được rỗng"`
 - `400 "một số cred_ids không tồn tại hoặc không thuộc iuser_id này"`
-- `400 "không đủ sessions khả dụng để đổi"`
+- `400 "không đủ sessions type=<X> khả dụng để đổi cho cred #N"`
 
-**Side effect**: Preserve remaining TTL (cred mới có cùng `expires_at` như cred cũ).
+**Side effects**:
+- Preserve remaining TTL (cred mới có TTL còn lại = cred cũ).
+- Type được preserve tự động — không cần truyền.
 
 ### GET /api/v1/user-creds
 
-**Query**: `iuser_id` (required)
+**Query**:
+- `iuser_id` string, required
+- `type` string, optional (`static|private|rotating`) — filter theo type
 
 **Success 200**: Cùng shape với `/claim`.
 
 ### POST /api/v1/release
 
-Xóa TẤT CẢ creds của user.
+Xóa creds của user.
 
-**Body**: `{ "iuser_id": "user_abc" }`
+**Body**:
+```json
+{ "iuser_id": "user_abc", "type": "static" }
+```
 
-**Success 200**: `{ "iuser_id": "user_abc", "released": 5 }`
+| Field | Type | Required | Note |
+|-------|------|----------|------|
+| iuser_id | string | ✓ | |
+| type | string | optional | nếu có → chỉ release creds thuộc type này; nếu bỏ trống → release tất cả |
+
+**Success 200**: `{ "iuser_id": "user_abc", "type": "static", "released": 3 }`
 
 ### POST /api/v1/extend
 
-Gia hạn TTL cho tất cả active creds của user.
+Gia hạn TTL cho active creds của user.
 
-**Body**: `{ "iuser_id": "user_abc", "ttl": 7200 }`
+**Body**:
+```json
+{ "iuser_id": "user_abc", "ttl": 7200, "type": "rotating" }
+```
 
 | Field | Type | Required | Note |
 |-------|------|----------|------|
 | iuser_id | string | ✓ | |
 | ttl | int | ✓ | giây, phải > 0 |
+| type | string | optional | nếu có → chỉ extend creds thuộc type này |
 
 **Success 200**: Cùng shape với `/claim` (creds sau gia hạn).
 
 **Errors**:
 - `400 "ttl phải > 0"`
+- `400 "type phải là static|private|rotating"`
 - `404 "không tìm thấy credentials active cho iuser_id này"`
 
 ### GET /api/v1/claim/status
 
-Tổng quan hệ thống.
+Tổng quan hệ thống, kèm breakdown theo type.
 
 **Success 200**:
 ```json
 {
   "total_connected_sessions": 32,
   "active_users": 5,
-  "total_claimed_creds": 25
+  "total_claimed_creds": 25,
+  "by_type": {
+    "static":   { "sessions": 10, "claimed_creds": 15, "available_slots": 35 },
+    "private":  { "sessions": 5,  "claimed_creds": 3,  "available_slots": 2 },
+    "rotating": { "sessions": 17, "claimed_creds": 7,  "available_slots": 78 }
+  }
 }
 ```
+
+`available_slots = sessions * max_per_type - claimed_creds`.
 
 ### GET /api/v1/claim/user-status
 
@@ -659,19 +718,30 @@ Tổng quan hệ thống.
 {
   "iuser_id": "user_abc",
   "active_creds": 5,
+  "by_type": { "static": 2, "private": 0, "rotating": 3 },
   "credentials": [ ... ]
 }
 ```
 
 ### GET /api/v1/claim/users
 
-Danh sách tất cả users đang có creds.
+Danh sách tất cả users đang có creds, kèm breakdown theo type.
 
 **Success 200** `data`:
 ```json
 [
-  { "iuser_id": "user_abc", "cred_count": 5, "earliest_expiry": "2026-05-27T15:30:00Z" },
-  { "iuser_id": "user_xyz", "cred_count": 3, "earliest_expiry": null }
+  {
+    "iuser_id": "user_abc",
+    "cred_count": 5,
+    "earliest_expiry": "2026-05-27T15:30:00Z",
+    "by_type": { "static": 2, "private": 0, "rotating": 3 }
+  },
+  {
+    "iuser_id": "user_xyz",
+    "cred_count": 3,
+    "earliest_expiry": null,
+    "by_type": { "static": 0, "private": 1, "rotating": 2 }
+  }
 ]
 ```
 
@@ -887,6 +957,7 @@ Stream `journalctl` của backend hoặc pppd.
   "username": "fbr00chgt@vnn",
   "password": "3b4r7U5L",
   "mac": "aa:bb:cc:dd:ee:01",
+  "type": "rotating",
   "status": "connected",
   "ip": "10.0.0.1",
   "public_ip": "14.224.245.142",
@@ -902,7 +973,8 @@ Stream `journalctl` của backend hoặc pppd.
 }
 ```
 
-`status` ∈ `disconnected | dialing | connected | error`
+- `status` ∈ `disconnected | dialing | connected | error`
+- `type` ∈ `static | private | rotating` (default `rotating`)
 
 ### Proxy object
 ```json
@@ -974,12 +1046,20 @@ TOKEN=$(curl -sS -X POST http://14.224.245.142/api/v1/auth/login \
   -d '{"username":"admin","password":"admin"}' | jq -r '.data.token')
 ```
 
-### Claim 5 creds cho user "abc"
+### Claim 5 creds type=rotating cho user "abc"
 ```bash
 curl -sS -X POST http://14.224.245.142/api/v1/claim \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"iuser_id":"abc","count":5,"ttl":3600}'
+  -d '{"iuser_id":"abc","count":5,"type":"rotating","ttl":3600}'
+```
+
+### Claim 1 cred type=private
+```bash
+curl -sS -X POST http://14.224.245.142/api/v1/claim \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"iuser_id":"abc","count":1,"type":"private","ttl":86400}'
 ```
 
 ### Change IP cho cred 1001

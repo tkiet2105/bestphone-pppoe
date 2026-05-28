@@ -22,6 +22,8 @@ async function init() {
   });
   document.getElementById('filter-line').addEventListener('change', loadSessions);
   document.getElementById('filter-status').addEventListener('change', loadSessions);
+  const ft = document.getElementById('filter-type');
+  if (ft) ft.addEventListener('change', loadSessions);
   _initSelectionUX();
 }
 
@@ -91,8 +93,11 @@ async function loadSessions() {
   const params = {};
   const lineId = document.getElementById('filter-line').value;
   const status = document.getElementById('filter-status').value;
+  const ftEl = document.getElementById('filter-type');
+  const sessType = ftEl ? ftEl.value : '';
   if (lineId) params.line_id = lineId;
   if (status) params.status = status;
+  if (sessType) params.type = sessType;
   try {
     _sessions = await Api.listSessions(params);
     renderSessions();
@@ -107,7 +112,7 @@ function lineName(id) {
 function renderSessions() {
   const tbody = document.querySelector('#sessions-table tbody');
   if (!_sessions.length) {
-    tbody.innerHTML = '<tr><td colspan="14" class="muted">Chưa có session nào. Bấm "⊕ Tạo session" để tạo.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="15" class="muted">Chưa có session nào. Bấm "⊕ Tạo session" để tạo.</td></tr>';
     _updateSelUI();
     return;
   }
@@ -140,6 +145,7 @@ function renderSessions() {
       <td class="mono">ppp${s.ppp_unit}</td>
       <td class="mono">${escapeHTML(s.iface || '—')}</td>
       <td class="mono small">${escapeHTML(s.username)}</td>
+      <td>${typeBadge(s.type)}</td>
       <td>${statusBadge(s.status)}${failBadge}${reconnectBadge}</td>
       <td class="mono small" data-uptime-since="${s.connected_at || ''}">${uptimeBadge(s)}</td>
       <td class="mono">${escapeHTML(s.public_ip || s.ip || '—')}</td>
@@ -481,6 +487,7 @@ async function submitCreateSession() {
   const lineId = parseInt(document.getElementById('sm-line').value);
   const count = parseInt(document.getElementById('sm-count').value) || 1;
   const mode = document.getElementById('sm-proxy-mode').value;
+  const sessType = document.getElementById('sm-type').value || 'rotating';
   if (count < 1 || count > 50) { Toast.error('Count phải 1..50'); return; }
   const proxyAuth = { mode };
   if (mode === 'manual') {
@@ -493,11 +500,11 @@ async function submitCreateSession() {
   }
   try {
     if (count === 1) {
-      const r = await Api.createSession(lineId, { proxy_auth: proxyAuth });
+      const r = await Api.createSession(lineId, { proxy_auth: proxyAuth, type: sessType });
       Toast.success(`Đã tạo session ${r.session.id} (${r.session.status})`);
     } else {
       Toast.info(`Đang tạo ${count} session...`);
-      const r = await Api.bulkCreateSessions(lineId, { count, proxy_auth: proxyAuth });
+      const r = await Api.bulkCreateSessions(lineId, { count, proxy_auth: proxyAuth, type: sessType });
       const ok = r.filter(x => x.status === 'connected').length;
       const err = r.filter(x => x.status === 'error').length;
       Toast.success(`Đã tạo: ${ok} thành công · ${err} lỗi / ${r.length}`);

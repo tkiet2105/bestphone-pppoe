@@ -12,6 +12,18 @@ async function loadStatus() {
     document.getElementById('st-sessions').textContent = s.total_connected_sessions;
     document.getElementById('st-users').textContent = s.active_users;
     document.getElementById('st-creds').textContent = s.total_claimed_creds;
+    const bt = s.by_type || {};
+    const labels = { static: 'Tĩnh', private: 'Private', rotating: 'Xoay' };
+    const tb = document.getElementById('type-breakdown');
+    tb.innerHTML = ['static', 'private', 'rotating'].map(t => {
+      const d = bt[t] || { sessions: 0, claimed_creds: 0, available_slots: 0 };
+      return `<div style="border:1px solid #334155;border-radius:8px;padding:10px 14px;min-width:170px">
+        <div class="muted small">${labels[t]} (${t})</div>
+        <div class="mono">Sessions: <strong>${d.sessions}</strong></div>
+        <div class="mono">Đã claim: <strong>${d.claimed_creds}</strong></div>
+        <div class="mono">Còn slot: <strong style="color:#22c55e">${d.available_slots}</strong></div>
+      </div>`;
+    }).join('');
   } catch (e) { Toast.error(e.message); }
 }
 
@@ -20,16 +32,19 @@ async function loadUsers() {
     const rows = await Api.claimUsers();
     const tbody = document.querySelector('#users-table tbody');
     if (!rows || rows.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" class="muted">Chưa có user nào claim.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="muted">Chưa có user nào claim.</td></tr>';
       return;
     }
     tbody.innerHTML = rows.map(u => {
       const exp = u.earliest_expiry
         ? `<span class="mono small">${fmtTime(u.earliest_expiry)}</span>`
         : '<span class="muted small">Vĩnh viễn</span>';
+      const bt = u.by_type || {};
+      const splits = `<span class="mono small">${bt.static||0}T / ${bt.private||0}P / ${bt.rotating||0}X</span>`;
       return `<tr>
         <td class="mono">${escapeHTML(u.iuser_id)}</td>
         <td>${u.cred_count}</td>
+        <td>${splits}</td>
         <td>${exp}</td>
         <td class="actions">
           <button class="small" onclick="showDetail('${escapeHTML(u.iuser_id)}')">Chi tiết</button>
@@ -62,9 +77,10 @@ async function doClaim() {
   const iuserId = document.getElementById('cl-iuserid').value.trim();
   const count = parseInt(document.getElementById('cl-count').value) || 1;
   const ttl = parseInt(document.getElementById('cl-ttl').value) || 0;
+  const sessType = document.getElementById('cl-type').value || 'rotating';
   if (!iuserId) { Toast.error('Nhập iuser_id'); return; }
   try {
-    const r = await Api.claim({ iuser_id: iuserId, count, ttl });
+    const r = await Api.claim({ iuser_id: iuserId, count, ttl, type: sessType });
     const div = document.getElementById('claim-result');
     const creds = r.credentials || [];
     if (creds.length === 0) {
@@ -99,13 +115,14 @@ async function loadDetail() {
     const creds = r.credentials || [];
     const tbody = document.querySelector('#detail-table tbody');
     if (creds.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="muted">Không có creds.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="muted">Không có creds.</td></tr>';
       document.getElementById('det-connstr').textContent = '';
       return;
     }
     tbody.innerHTML = creds.map(c => `<tr>
       <td>${c.cred_id}</td>
       <td>#${c.session_id}</td>
+      <td>${typeof typeBadge === 'function' ? typeBadge(c.type) : escapeHTML(c.type || '')}</td>
       <td class="mono">${escapeHTML(c.ip)}:${c.port}</td>
       <td class="mono">${escapeHTML(c.username)}</td>
       <td class="mono">${escapeHTML(c.password)}</td>

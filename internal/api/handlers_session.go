@@ -45,6 +45,7 @@ type proxyAuthReq struct {
 type createSessionReq struct {
 	Username  string        `json:"username"`   // optional — override line cred
 	Password  string        `json:"password"`   // optional — override line cred
+	Type      string        `json:"type"`       // optional — static|private|rotating (default rotating)
 	ProxyAuth *proxyAuthReq `json:"proxy_auth"` // optional — client proxy auth
 }
 
@@ -71,6 +72,7 @@ func CreateLineSession(c *gin.Context) {
 // bulkSessReq — mirror Mode 2: chỉ count + proxy_auth (shared cho mọi session).
 type bulkSessReq struct {
 	Count     int           `json:"count" binding:"required"`
+	Type      string        `json:"type"`
 	ProxyAuth *proxyAuthReq `json:"proxy_auth"`
 }
 
@@ -106,7 +108,7 @@ func CreateLineSessionsBulk(c *gin.Context) {
 		if i > 0 {
 			time.Sleep(2 * time.Second)
 		}
-		sub := createSessionReq{ProxyAuth: req.ProxyAuth}
+		sub := createSessionReq{Type: req.Type, ProxyAuth: req.ProxyAuth}
 		sess, _, err := createSessionAndDial(line, sub)
 		for retry := 1; retry <= maxRetries && err != nil && isPADITimeout(err.Error()) && sess != nil; retry++ {
 			log.Printf("[bulk-create] session %d PADI timeout, retry %d/%d", sess.Id, retry, maxRetries)
@@ -173,6 +175,14 @@ func createSessionAndDial(line models.Line, req createSessionReq) (*models.Sessi
 		return nil, nil, fmt.Errorf("cần ISP cred: nhập trong line.username/password hoặc override per-session")
 	}
 
+	sessType := req.Type
+	if sessType == "" {
+		sessType = models.SessionTypeRotating
+	}
+	if !models.IsValidSessionType(sessType) {
+		return nil, nil, fmt.Errorf("type phải là static|private|rotating")
+	}
+
 	mac := ""
 	if line.UseMacvlan {
 		mac = randMacGo()
@@ -190,6 +200,7 @@ func createSessionAndDial(line models.Line, req createSessionReq) (*models.Sessi
 		Username: username,
 		Password: password,
 		MAC:      mac,
+		Type:     sessType,
 		Status:   models.StatusDisconnected,
 	}
 	if err := db.DB.Create(&sess).Error; err != nil {
@@ -267,6 +278,9 @@ func ListSessions(c *gin.Context) {
 	}
 	if status := c.Query("status"); status != "" {
 		q = q.Where("status = ?", status)
+	}
+	if t := c.Query("type"); t != "" {
+		q = q.Where("type = ?", t)
 	}
 	q.Find(&sessions)
 

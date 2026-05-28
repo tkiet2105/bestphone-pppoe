@@ -32,6 +32,12 @@
           <option value="error">Lỗi</option>
           <option value="disconnected">Đã ngắt</option>
         </select>
+        <select id="filter-type" style="max-width:160px">
+          <option value="">Tất cả loại</option>
+          <option value="static">Tĩnh (5 user)</option>
+          <option value="private">Private (1 user)</option>
+          <option value="rotating">Xoay (5 user)</option>
+        </select>
         <button onclick="loadSessions()">↻ Tải lại</button>
         <button onclick="openCreateSession()">⊕ Tạo session</button>
         <button class="secondary" onclick="showExport()">⎘ Copy proxy</button>
@@ -40,6 +46,7 @@
         <thead><tr>
           <th class="cb-cell"><input type="checkbox" class="head-check" onchange="toggleSelectAll(this.checked)" title="Chọn tất cả"></th>
           <th>#</th><th>Line</th><th>ppp</th><th>Cổng PPP</th><th>Tên đăng nhập</th>
+          <th>Loại</th>
           <th>Trạng thái</th><th>Thời gian live</th><th>Public IP</th><th>Cổng proxy</th><th>Số tài khoản</th>
           <th title="Chu kỳ tự đổi IP — click để cấu hình">Tự đổi IP</th>
           <th>Lỗi</th>
@@ -61,6 +68,14 @@
       <div class="form-row"><label>Số lượng session cần tạo</label>
         <input type="number" id="sm-count" value="1" min="1" max="50">
         <div class="muted small" style="margin-top:4px">Tối đa 50. Tất cả đều dùng tài khoản ISP của line, mỗi cái 1 IP riêng.</div>
+      </div>
+      <div class="form-row"><label>Loại proxy (type)</label>
+        <select id="sm-type">
+          <option value="rotating">Xoay — 5 user/session, có thể đổi IP</option>
+          <option value="static">Tĩnh — 5 user/session, IP cố định</option>
+          <option value="private">Private — 1 user/session</option>
+        </select>
+        <div class="muted small" style="margin-top:4px">Type chỉ ảnh hưởng tới giới hạn user/session khi claim.</div>
       </div>
       <div class="form-row"><label>Tài khoản để khách hàng đăng nhập proxy</label>
         <select id="sm-proxy-mode" onchange="updateSessModalUI()">
