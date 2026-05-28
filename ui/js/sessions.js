@@ -159,6 +159,7 @@ function renderSessions() {
           <span class="slider"></span>
         </label>
         <button class="small" onclick="rotateSession(${s.id})" title="Đổi IP công cộng">↻ Đổi IP</button>
+        <button class="small secondary" onclick="changeSessionType(${s.id}, '${s.type || 'rotating'}')" title="Đổi loại proxy">🏷 Loại</button>
         <button class="small secondary" onclick="openSessionRules(${s.id})" title="Quản lý rule cho phiên này">🛡 Rule</button>
         <button class="small danger" onclick="deleteSession(${s.id})" title="Xóa phiên">✕ Xóa</button>
       </td>
@@ -344,6 +345,16 @@ function _showCtxMenu(x, y) {
       <span class="ctx-icon">▶</span><span style="flex:1">Tiếp tục xoay tự động (bỏ tạm dừng)</span>
     </div>
     <div class="ctx-sep"></div>
+    <div class="ctx-item" data-act="type-static">
+      <span class="ctx-icon">◼</span><span style="flex:1">Đổi loại → <b>Tĩnh</b> (5 user/session)</span>
+    </div>
+    <div class="ctx-item" data-act="type-private">
+      <span class="ctx-icon">★</span><span style="flex:1">Đổi loại → <b>Private</b> (1 user/session)</span>
+    </div>
+    <div class="ctx-item" data-act="type-rotating">
+      <span class="ctx-icon">↻</span><span style="flex:1">Đổi loại → <b>Xoay</b> (5 user/session)</span>
+    </div>
+    <div class="ctx-sep"></div>
     <div class="ctx-item" data-act="copy-default-pub">
       <span class="ctx-icon">⎘</span><span style="flex:1">Copy proxy <b>mặc định</b> (Public IP)</span>
     </div>
@@ -416,6 +427,9 @@ async function bulkAction(act) {
     case 'rule-clear':         return bulkClearRules(ids);
     case 'auto-rotate':        return bulkAutoRotate(ids);
     case 'resume-rotate':      return bulkResumeAutoRotate(ids);
+    case 'type-static':        return bulkSetType(ids, 'static');
+    case 'type-private':       return bulkSetType(ids, 'private');
+    case 'type-rotating':      return bulkSetType(ids, 'rotating');
     case 'delete': {
       const okDel = await Dialog.confirm(
         `Xóa <b>${ids.length}</b> phiên đã chọn?\n\nHành động không thể hoàn tác.`,
@@ -703,6 +717,57 @@ async function bulkResumeAutoRotate(sessionIds) {
   try {
     const r = await Api.resumeAutoRotateBatch(sessionIds);
     Toast.success(`Đã tiếp tục xoay tự động cho ${r.updated} session`);
+    loadSessions();
+  } catch (e) { Toast.error('Lỗi: ' + e.message); }
+}
+
+async function bulkSetType(sessionIds, type) {
+  const labels = { static: 'Tĩnh', private: 'Private', rotating: 'Xoay' };
+  try {
+    const r = await Api.setSessionTypeBatch(sessionIds, type);
+    const ok = r.filter(x => x.updated).length;
+    const fail = r.filter(x => x.error).length;
+    if (fail > 0) {
+      Toast.error(`Đổi loại: ${ok} OK · ${fail} fail (vượt max creds)`);
+      const errMsgs = [...new Set(r.filter(x => x.error).map(x => `#${x.session_id}: ${x.error}`))];
+      errMsgs.slice(0, 3).forEach(m => Toast.info(m));
+    } else {
+      Toast.success(`Đã đổi ${ok} session sang loại ${labels[type] || type}`);
+    }
+    loadSessions();
+  } catch (e) { Toast.error('Lỗi đổi loại: ' + e.message); }
+}
+
+async function changeSessionType(id, currentType) {
+  const labels = { static: 'Tĩnh', private: 'Private', rotating: 'Xoay' };
+  const options = ['static', 'private', 'rotating'].filter(t => t !== currentType);
+  // Picked value tracked via closure so we can read it after Dialog removes DOM.
+  let picked = options[0];
+  const bodyHTML = `<div style="margin-bottom:8px">Loại hiện tại: <b>${labels[currentType] || currentType}</b></div>
+    <label style="display:block;margin-bottom:4px">Đổi sang loại mới:</label>
+    <select id="ct-sel" style="width:100%">
+      ${options.map(t => `<option value="${t}">${labels[t]} (${t})</option>`).join('')}
+    </select>`;
+  const ok = await Dialog.show({
+    title: `Đổi loại session #${id}`,
+    bodyHTML,
+    actions: [
+      { label: 'Hủy', kind: 'secondary', value: false },
+      { label: 'Đổi', kind: 'primary', value: true },
+    ],
+    dismissValue: false,
+    onMount: (bg) => {
+      const sel = bg.querySelector('#ct-sel');
+      if (sel) {
+        sel.focus();
+        sel.addEventListener('change', () => { picked = sel.value; });
+      }
+    },
+  });
+  if (!ok) return;
+  try {
+    await Api.setSessionType(id, picked);
+    Toast.success(`Đã đổi #${id} → ${labels[picked]}`);
     loadSessions();
   } catch (e) { Toast.error('Lỗi: ' + e.message); }
 }

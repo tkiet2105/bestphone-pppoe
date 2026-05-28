@@ -488,6 +488,108 @@ func ResumeAutoRotateBatch(c *gin.Context) {
 	ok(c, gin.H{"updated": res.RowsAffected})
 }
 
+// SetSessionType — đổi type của 1 session. Refuse nếu số creds active hiện tại
+// vượt max của type mới (admin phải xóa bớt creds trước).
+type setTypeReq struct {
+	Type string `json:"type" binding:"required"`
+}
+
+func SetSessionType(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	var req setTypeReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, 400, err.Error())
+		return
+	}
+	if !models.IsValidSessionType(req.Type) {
+		fail(c, 400, "type phải là static|private|rotating")
+		return
+	}
+	var s models.Session
+	if err := db.DB.First(&s, id).Error; err != nil {
+		fail(c, 404, "session không tồn tại")
+		return
+	}
+	var p models.Proxy
+	if err := db.DB.Where("session_id = ?", id).First(&p).Error; err == nil {
+		newMax := models.MaxCredsForType(req.Type)
+		var cur int64
+		now := time.Now()
+		db.DB.Model(&models.ProxyCredential{}).
+			Where("proxy_id = ? AND enabled = ? AND (expires_at IS NULL OR expires_at > ?)", p.Id, true, now).
+			Count(&cur)
+		if int(cur) > newMax {
+			fail(c, 400, fmt.Sprintf("không thể đổi type=%s (max %d creds): session đang có %d creds active, xóa bớt trước", req.Type, newMax, cur))
+			return
+		}
+	}
+	if err := db.DB.Model(&s).Update("type", req.Type).Error; err != nil {
+		fail(c, 500, err.Error())
+		return
+	}
+	ok(c, gin.H{"session_id": id, "type": req.Type})
+}
+
+// SetSessionTypeBatch — bulk đổi type. Trả per-session result; session vượt max
+// được skip với error, các session khác vẫn được apply.
+type setTypeBatchReq struct {
+	SessionIds []uint `json:"session_ids" binding:"required"`
+	Type       string `json:"type" binding:"required"`
+}
+
+func SetSessionTypeBatch(c *gin.Context) {
+	var req setTypeBatchReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, 400, err.Error())
+		return
+	}
+	if !models.IsValidSessionType(req.Type) {
+		fail(c, 400, "type phải là static|private|rotating")
+		return
+	}
+	if len(req.SessionIds) == 0 {
+		fail(c, 400, "thiếu session_ids")
+		return
+	}
+	type result struct {
+		SessionId uint   `json:"session_id"`
+		Updated   bool   `json:"updated"`
+		Error     string `json:"error,omitempty"`
+	}
+	out := make([]result, len(req.SessionIds))
+	now := time.Now()
+	newMax := models.MaxCredsForType(req.Type)
+	for i, sid := range req.SessionIds {
+		r := result{SessionId: sid}
+		var s models.Session
+		if err := db.DB.First(&s, sid).Error; err != nil {
+			r.Error = "session không tồn tại"
+			out[i] = r
+			continue
+		}
+		var p models.Proxy
+		if err := db.DB.Where("session_id = ?", sid).First(&p).Error; err == nil {
+			var cur int64
+			db.DB.Model(&models.ProxyCredential{}).
+				Where("proxy_id = ? AND enabled = ? AND (expires_at IS NULL OR expires_at > ?)", p.Id, true, now).
+				Count(&cur)
+			if int(cur) > newMax {
+				r.Error = fmt.Sprintf("đang có %d creds, vượt max %d", cur, newMax)
+				out[i] = r
+				continue
+			}
+		}
+		if err := db.DB.Model(&s).Update("type", req.Type).Error; err != nil {
+			r.Error = err.Error()
+			out[i] = r
+			continue
+		}
+		r.Updated = true
+		out[i] = r
+	}
+	ok(c, out)
+}
+
 type rotateBatchReq struct {
 	SessionIds  []uint `json:"session_ids" binding:"required"`
 	Concurrency int    `json:"concurrency"`

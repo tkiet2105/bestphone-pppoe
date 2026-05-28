@@ -38,6 +38,8 @@ func RegisterRoutes(r *gin.Engine) {
 		g.POST("/sessions/:id/auto-rotate/resume", ResumeAutoRotate)
 		g.POST("/sessions/auto-rotate/batch", SetSessionAutoRotateBatch)
 		g.POST("/sessions/auto-rotate/resume", ResumeAutoRotateBatch)
+		g.PUT("/sessions/:id/type", SetSessionType)
+		g.POST("/sessions/type/batch", SetSessionTypeBatch)
 
 		g.GET("/proxies/export", ExportProxies)
 		g.GET("/proxies/:id/credentials", ListCreds)

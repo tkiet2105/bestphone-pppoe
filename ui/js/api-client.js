@@ -90,6 +90,8 @@ const Api = (() => {
     resumeAutoRotateBatch: (ids) => _req('POST', '/sessions/auto-rotate/resume', { session_ids: ids }),
     setAutoRotateBatch: (ids, seconds) => _req('POST', '/sessions/auto-rotate/batch', { session_ids: ids, seconds }),
     rotateBatch: (ids, concurrency) => _req('POST', '/rotate', { session_ids: ids, concurrency: concurrency || 5 }),
+    setSessionType: (id, type) => _req('PUT', `/sessions/${id}/type`, { type }),
+    setSessionTypeBatch: (ids, type) => _req('POST', '/sessions/type/batch', { session_ids: ids, type }),
 
     // creds
     listCreds: (pid) => _req('GET', `/proxies/${pid}/credentials`),

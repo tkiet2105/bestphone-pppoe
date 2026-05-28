@@ -441,6 +441,47 @@ Resume auto-rotate bị paused (reset `auto_rotate_paused=false`, `rotate_fail_c
 
 **Success 200**: `{ "updated": 3 }`
 
+### PUT /api/v1/sessions/:id/type
+
+Đổi type của 1 session. Refuse nếu số creds active hiện tại vượt max của type mới.
+
+**Body**:
+```json
+{ "type": "static" }
+```
+
+| Field | Type | Required | Note |
+|-------|------|----------|------|
+| type | string | ✓ | `static` \| `private` \| `rotating` |
+
+**Success 200**: `{ "session_id": 100, "type": "static" }`
+
+**Errors**:
+- `400 "type phải là static|private|rotating"`
+- `400 "không thể đổi type=<X> (max <N> creds): session đang có <Y> creds active, xóa bớt trước"`
+- `404 "session không tồn tại"`
+
+### POST /api/v1/sessions/type/batch
+
+Bulk đổi type cho nhiều session. Trả per-session result.
+
+**Body**:
+```json
+{ "session_ids": [1, 2, 3], "type": "static" }
+```
+
+**Success 200** `data`:
+```json
+[
+  { "session_id": 1, "updated": true },
+  { "session_id": 2, "updated": false, "error": "đang có 6 creds, vượt max 5" }
+]
+```
+
+**Errors** (chỉ khi toàn bộ request invalid):
+- `400 "type phải là static|private|rotating"`
+- `400 "thiếu session_ids"`
+
 ### POST /api/v1/rotate
 
 Rotate batch song song.

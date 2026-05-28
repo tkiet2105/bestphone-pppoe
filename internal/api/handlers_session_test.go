@@ -187,3 +187,127 @@ func TestTruncateErr(t *testing.T) {
 func init() {
 	_ = fmt.Sprintf // ensure fmt imported
 }
+
+// ---------- SetSessionType tests ----------
+
+func setupSessionTypeRouter(t *testing.T) *testutil.RouterKit {
+	t.Helper()
+	rk := setupSessionRouter(t)
+	rk.R.PUT("/api/v1/sessions/:id/type", BearerAuth(), SetSessionType)
+	rk.R.POST("/api/v1/sessions/type/batch", BearerAuth(), SetSessionTypeBatch)
+	return rk
+}
+
+func TestSetSessionType_Success(t *testing.T) {
+	rk := setupSessionTypeRouter(t)
+	line := testutil.SeedLine(t)
+	sess := testutil.SeedSession(t, line.Id)
+
+	body := map[string]any{"type": "static"}
+	w := testutil.DoJSON(t, rk.R, "PUT", "/api/v1/sessions/"+uid(sess.Id)+"/type", body, rk.Tok)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var s models.Session
+	db.DB.First(&s, sess.Id)
+	if s.Type != "static" {
+		t.Errorf("expected type=static, got %s", s.Type)
+	}
+}
+
+func TestSetSessionType_InvalidType(t *testing.T) {
+	rk := setupSessionTypeRouter(t)
+	line := testutil.SeedLine(t)
+	sess := testutil.SeedSession(t, line.Id)
+	body := map[string]any{"type": "bogus"}
+	w := testutil.DoJSON(t, rk.R, "PUT", "/api/v1/sessions/"+uid(sess.Id)+"/type", body, rk.Tok)
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestSetSessionType_NotFound(t *testing.T) {
+	rk := setupSessionTypeRouter(t)
+	body := map[string]any{"type": "static"}
+	w := testutil.DoJSON(t, rk.R, "PUT", "/api/v1/sessions/9999/type", body, rk.Tok)
+	if w.Code != 404 {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestSetSessionType_ExceedsMax(t *testing.T) {
+	rk := setupSessionTypeRouter(t)
+	line := testutil.SeedLine(t)
+	// Tạo session với type=rotating + 3 creds. Đổi sang private (max=1) → fail.
+	sess := models.Session{
+		LineId: line.Id, PppUnit: 700, Username: "u", Password: "p",
+		Type: models.SessionTypeRotating, Status: models.StatusConnected,
+	}
+	db.DB.Create(&sess)
+	proxy := models.Proxy{SessionId: sess.Id, Port: 58600, Status: "running"}
+	db.DB.Create(&proxy)
+	for i := 0; i < 3; i++ {
+		db.DB.Create(&models.ProxyCredential{
+			ProxyId: proxy.Id, Username: fmt.Sprintf("u%d", i), Password: "p", Enabled: true,
+		})
+	}
+
+	body := map[string]any{"type": "private"}
+	w := testutil.DoJSON(t, rk.R, "PUT", "/api/v1/sessions/"+uid(sess.Id)+"/type", body, rk.Tok)
+	if w.Code != 400 {
+		t.Fatalf("expected 400 (exceeds max), got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSetSessionTypeBatch_MixedResults(t *testing.T) {
+	rk := setupSessionTypeRouter(t)
+	line := testutil.SeedLine(t)
+
+	// Session A: 0 creds → đổi sang private OK.
+	sa := models.Session{
+		LineId: line.Id, PppUnit: 800, Username: "u", Password: "p",
+		Type: models.SessionTypeRotating, Status: models.StatusConnected,
+	}
+	db.DB.Create(&sa)
+	pa := models.Proxy{SessionId: sa.Id, Port: 58700, Status: "running"}
+	db.DB.Create(&pa)
+
+	// Session B: 2 creds → đổi sang private (max=1) fail.
+	sb := models.Session{
+		LineId: line.Id, PppUnit: 801, Username: "u", Password: "p",
+		Type: models.SessionTypeRotating, Status: models.StatusConnected,
+	}
+	db.DB.Create(&sb)
+	pb := models.Proxy{SessionId: sb.Id, Port: 58701, Status: "running"}
+	db.DB.Create(&pb)
+	for i := 0; i < 2; i++ {
+		db.DB.Create(&models.ProxyCredential{
+			ProxyId: pb.Id, Username: fmt.Sprintf("ub%d", i), Password: "p", Enabled: true,
+		})
+	}
+
+	body := map[string]any{"session_ids": []uint{sa.Id, sb.Id, 9999}, "type": "private"}
+	w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/sessions/type/batch", body, rk.Tok)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	resp := testutil.ParseResponse(t, w)
+	var results []struct {
+		SessionId uint   `json:"session_id"`
+		Updated   bool   `json:"updated"`
+		Error     string `json:"error,omitempty"`
+	}
+	json.Unmarshal(resp.Data, &results)
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	if !results[0].Updated {
+		t.Errorf("session A should update, got error: %s", results[0].Error)
+	}
+	if results[1].Updated {
+		t.Errorf("session B should fail (over max)")
+	}
+	if results[2].Updated || results[2].Error == "" {
+		t.Errorf("session 9999 should fail not-found")
+	}
+}
