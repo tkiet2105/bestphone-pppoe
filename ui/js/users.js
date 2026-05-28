@@ -14,14 +14,20 @@ async function loadStatus() {
     document.getElementById('st-creds').textContent = s.total_claimed_creds;
     const bt = s.by_type || {};
     const labels = { static: 'Tĩnh', private: 'Private', rotating: 'Xoay' };
+    const styles = {
+      static:   { bg: '#155e75', border: '#0891b2', color: '#a5f3fc' },
+      private:  { bg: '#581c87', border: '#9333ea', color: '#e9d5ff' },
+      rotating: { bg: '#9a3412', border: '#ea580c', color: '#fed7aa' },
+    };
     const tb = document.getElementById('type-breakdown');
     tb.innerHTML = ['static', 'private', 'rotating'].map(t => {
       const d = bt[t] || { sessions: 0, claimed_creds: 0, available_slots: 0 };
-      return `<div style="border:1px solid #334155;border-radius:8px;padding:10px 14px;min-width:170px">
-        <div class="muted small">${labels[t]} (${t})</div>
-        <div class="mono">Sessions: <strong>${d.sessions}</strong></div>
-        <div class="mono">Đã claim: <strong>${d.claimed_creds}</strong></div>
-        <div class="mono">Còn slot: <strong style="color:#22c55e">${d.available_slots}</strong></div>
+      const st = styles[t];
+      return `<div style="border:1px solid ${st.border};background:${st.bg};border-radius:8px;padding:10px 14px;min-width:170px">
+        <div style="color:${st.color};font-weight:600;font-size:13px;margin-bottom:4px">${labels[t]} (${t})</div>
+        <div class="mono" style="color:#e2e8f0">Sessions: <strong>${d.sessions}</strong></div>
+        <div class="mono" style="color:#e2e8f0">Đã claim: <strong>${d.claimed_creds}</strong></div>
+        <div class="mono" style="color:#e2e8f0">Còn slot: <strong style="color:#86efac">${d.available_slots}</strong></div>
       </div>`;
     }).join('');
   } catch (e) { Toast.error(e.message); }

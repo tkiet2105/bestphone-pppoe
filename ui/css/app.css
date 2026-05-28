@@ -290,6 +290,35 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #2563eb
 .badge.error .badge-icon { color: #f87171; }
 .badge.disconnected, .badge.stopped { background: #1f2937; color: #94a3b8; }
 
+/* ─── Session type badges — màu khác nhau để dễ phân biệt ─── */
+.badge.static {
+  background: #155e75; color: #a5f3fc;
+  border: 1px solid #0891b2;
+}
+.badge.static .badge-icon { color: #67e8f9; }
+.badge.private {
+  background: #581c87; color: #e9d5ff;
+  border: 1px solid #9333ea;
+}
+.badge.private .badge-icon { color: #d8b4fe; }
+.badge.rotating {
+  background: #9a3412; color: #fed7aa;
+  border: 1px solid #ea580c;
+}
+.badge.rotating .badge-icon { color: #fdba74; }
+
+/* Nút "🏷 Loại" — phối màu trung tính nổi bật để phân biệt với button khác */
+button.small.btn-type {
+  background: #1e293b; color: #e0e7ff;
+  border: 1px solid #6366f1;
+}
+button.small.btn-type:hover { background: #312e81; border-color: #818cf8; }
+
+/* Context menu items đổi loại — icon màu theo type */
+.ctx-item[data-act="type-static"]   .ctx-icon { color: #67e8f9; }
+.ctx-item[data-act="type-private"]  .ctx-icon { color: #d8b4fe; }
+.ctx-item[data-act="type-rotating"] .ctx-icon { color: #fdba74; }
+
 /* ─── Auto-rotate preset chips ─── */
 .ar-preset {
   background: #334155; color: #e2e8f0;

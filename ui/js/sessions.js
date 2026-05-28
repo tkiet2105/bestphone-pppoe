@@ -159,7 +159,7 @@ function renderSessions() {
           <span class="slider"></span>
         </label>
         <button class="small" onclick="rotateSession(${s.id})" title="Đổi IP công cộng">↻ Đổi IP</button>
-        <button class="small secondary" onclick="changeSessionType(${s.id}, '${s.type || 'rotating'}')" title="Đổi loại proxy">🏷 Loại</button>
+        <button class="small btn-type" onclick="changeSessionType(${s.id}, '${s.type || 'rotating'}')" title="Đổi loại proxy">🏷 Loại</button>
         <button class="small secondary" onclick="openSessionRules(${s.id})" title="Quản lý rule cho phiên này">🛡 Rule</button>
         <button class="small danger" onclick="deleteSession(${s.id})" title="Xóa phiên">✕ Xóa</button>
       </td>
