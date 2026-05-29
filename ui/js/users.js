@@ -152,15 +152,19 @@ async function copyConnStr() {
 async function extendCred(credId) {
   if (!_detailUser) return;
   const ttlStr = await Dialog.prompt(
-    `Gia hạn TTL (giây) cho cred <b>#${credId}</b>:\n\nLưu ý: TTL mới SET lại expires_at = now + ttl (không cộng dồn).`,
-    { title: 'Gia hạn 1 cred', defaultValue: '7200', okText: 'Gia hạn' }
+    `Cộng dồn TTL (giây) cho cred <b>#${credId}</b>:\n\nVD: cred còn 1h, nhập 7200 → cred mới còn 3h (1h cũ + 2h cộng).\nCred chưa có TTL (vô thời hạn) sẽ bị BỎ QUA.`,
+    { title: 'Gia hạn 1 cred (cộng dồn)', defaultValue: '7200', okText: 'Cộng dồn' }
   );
   if (ttlStr === null) return;
   const ttl = parseInt(ttlStr) || 0;
   if (ttl <= 0) { Toast.error('TTL phải > 0'); return; }
   try {
-    await Api.extendCreds({ iuser_id: _detailUser, ttl, cred_ids: [credId] });
-    Toast.success(`Đã gia hạn cred #${credId} thêm ${ttl}s`);
+    const r = await Api.extendCreds({ iuser_id: _detailUser, ttl, cred_ids: [credId] });
+    if (r.skipped_no_ttl > 0) {
+      Toast.info(`Cred #${credId} vô thời hạn → không gia hạn`);
+    } else {
+      Toast.success(`Đã cộng dồn ${ttl}s vào cred #${credId}`);
+    }
     loadDetail();
     loadStatus();
   } catch (e) { Toast.error(e.message); }
@@ -194,8 +198,12 @@ async function extendUser() {
   const ttl = parseInt(document.getElementById('det-ttl').value) || 0;
   if (ttl <= 0) { Toast.error('TTL phải > 0'); return; }
   try {
-    await Api.extendCreds({ iuser_id: _detailUser, ttl });
-    Toast.success('Đã gia hạn');
+    const r = await Api.extendCreds({ iuser_id: _detailUser, ttl });
+    const n = (r.credentials || []).length;
+    const skipped = r.skipped_no_ttl || 0;
+    let msg = `Đã cộng dồn ${ttl}s vào ${n} cred`;
+    if (skipped > 0) msg += ` (bỏ qua ${skipped} cred vô thời hạn)`;
+    Toast.success(msg);
     loadDetail();
     loadUsers();
   } catch (e) { Toast.error(e.message); }

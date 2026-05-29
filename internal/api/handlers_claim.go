@@ -581,28 +581,54 @@ func ExtendCredentials(c *gin.Context) {
 		}
 	}
 
-	exp := time.Now().Add(time.Duration(req.Ttl) * time.Second)
+	// Cộng dồn: new_expires_at = max(now, current_expires_at) + ttl giây.
+	// max(now, current) xử lý cred đã quá hạn (negative remaining) → start lại từ now.
+	// Cred có expires_at = NULL (never expires) được GIỮ NGUYÊN (gia hạn vô tận
+	// = vô nghĩa).
+	now := time.Now()
+	add := time.Duration(req.Ttl) * time.Second
 	ids := make([]uint, 0, len(targetCreds))
+	skipped := 0
 	for _, cr := range targetCreds {
+		if cr.ExpiresAt == nil {
+			skipped++
+			continue
+		}
+		base := *cr.ExpiresAt
+		if base.Before(now) {
+			base = now
+		}
+		newExp := base.Add(add)
+		db.DB.Model(&models.ProxyCredential{}).Where("id = ?", cr.Id).Update("expires_at", newExp)
 		ids = append(ids, cr.Id)
 	}
-	db.DB.Model(&models.ProxyCredential{}).Where("id IN ?", ids).Update("expires_at", exp)
 
 	// Trả về cred đã extend (refresh từ DB)
 	var updated []models.ProxyCredential
-	db.DB.Where("id IN ?", ids).Find(&updated)
+	if len(ids) > 0 {
+		db.DB.Where("id IN ?", ids).Find(&updated)
+	}
 
 	scope := ternaryStr(req.Type == "", "tất cả", req.Type)
 	if len(req.CredIds) > 0 {
 		scope = fmt.Sprintf("%d cred chỉ định", len(req.CredIds))
 	}
+	summary := fmt.Sprintf("Cộng dồn %ds cho %d cred của iuser=%s (scope: %s)",
+		req.Ttl, len(updated), req.IUserId, scope)
+	if skipped > 0 {
+		summary += fmt.Sprintf(", bỏ qua %d cred không có TTL", skipped)
+	}
 	activity.Info(activity.CategoryClaim, "extend",
-		fmt.Sprintf("Extend %d cred của iuser=%s thêm %ds (scope: %s)",
-			len(updated), req.IUserId, req.Ttl, scope),
+		summary,
 		activity.IUserId(req.IUserId), activity.ClientIP(c.ClientIP()),
-		activity.F("type", req.Type), activity.F("ttl_seconds", req.Ttl),
+		activity.F("type", req.Type), activity.F("ttl_seconds_added", req.Ttl),
 		activity.F("cred_ids", req.CredIds),
 		activity.F("extended_count", len(updated)),
-		activity.F("new_expires_at", exp.Format(time.RFC3339)))
-	ok(c, gin.H{"iuser_id": req.IUserId, "type": req.Type, "credentials": buildCredResponses(updated)})
+		activity.F("skipped_no_ttl", skipped))
+	ok(c, gin.H{
+		"iuser_id":       req.IUserId,
+		"type":           req.Type,
+		"credentials":    buildCredResponses(updated),
+		"skipped_no_ttl": skipped,
+	})
 }

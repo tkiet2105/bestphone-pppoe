@@ -718,11 +718,19 @@ Xóa creds của user.
 
 ### POST /api/v1/extend
 
-Gia hạn TTL cho active creds của user. Hỗ trợ 3 scope:
+**Cộng dồn** TTL cho active creds của user. Công thức:
+```
+new_expires_at = max(now, current_expires_at) + ttl_seconds
+```
 
-- **Tất cả creds của user**: chỉ truyền `iuser_id` + `ttl`
-- **Theo type**: thêm `type` (static/private/rotating) → chỉ gia hạn creds thuộc type đó
-- **Chỉ định cred_ids cụ thể**: thêm `cred_ids` (array) → chỉ gia hạn các cred này (cred phải thuộc iuser_id)
+- Cred còn hạn (current > now): cộng thêm ttl vào hạn hiện tại
+- Cred đã quá hạn (current < now): tính lại từ `now` + ttl (không cộng dồn quá khứ âm)
+- Cred `expires_at = NULL` (vô thời hạn): **BỎ QUA** (extend vô tận = vô nghĩa) → trả về trong field `skipped_no_ttl`
+
+Hỗ trợ 3 scope:
+- **Tất cả creds của user**: `iuser_id` + `ttl`
+- **Theo type**: thêm `type` (static/private/rotating)
+- **Chỉ định cred_ids cụ thể**: thêm `cred_ids` (array)
 
 **Body**:
 ```json
@@ -732,11 +740,19 @@ Gia hạn TTL cho active creds của user. Hỗ trợ 3 scope:
 | Field | Type | Required | Note |
 |-------|------|----------|------|
 | iuser_id | string | ✓ | chủ sở hữu creds |
-| ttl | int | ✓ | giây, phải > 0. Set `expires_at = now + ttl` (KHÔNG cộng dồn) |
+| ttl | int | ✓ | giây, phải > 0. **Cộng dồn** vào hạn hiện tại |
 | type | string | optional | chỉ extend creds thuộc type này; bỏ qua nếu `cred_ids` được dùng |
 | cred_ids | []uint | optional | chỉ extend các cred này. Tất cả phải thuộc `iuser_id`. |
 
-**Success 200**: Cùng shape với `/claim` (creds sau gia hạn). Nếu dùng `cred_ids`, response chỉ chứa các cred được extend.
+**Success 200**:
+```json
+{
+  "iuser_id": "user_abc",
+  "type": "",
+  "credentials": [ ... ],
+  "skipped_no_ttl": 0
+}
+```
 
 **Errors**:
 - `400 "ttl phải > 0"`

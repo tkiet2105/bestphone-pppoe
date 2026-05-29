@@ -313,6 +313,7 @@ func TestExtend_Success(t *testing.T) {
 	rk := setupClaimRouter(t)
 	seedConnectedSessions(t, 3)
 
+	// Claim với TTL 60s, sau đó extend +7200 → cộng dồn ~7260s (không phải reset về 7200)
 	claimBody := map[string]any{"iuser_id": "user-ext", "count": 1, "ttl": 60}
 	testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", claimBody, rk.Tok)
 
@@ -328,8 +329,9 @@ func TestExtend_Success(t *testing.T) {
 		t.Fatal("expires_at should be set")
 	}
 	remaining := time.Until(*cr.Credentials[0].ExpiresAt)
-	if remaining < 7000*time.Second || remaining > 7200*time.Second {
-		t.Fatalf("expected ~7200s remaining, got %v", remaining)
+	// 60s gốc + 7200s = 7260s. Cho phép sai số ±10s do exec time.
+	if remaining < 7250*time.Second || remaining > 7270*time.Second {
+		t.Fatalf("expected ~7260s (60 + 7200), got %v", remaining)
 	}
 }
 
@@ -369,15 +371,15 @@ func TestExtend_SpecificCredIds(t *testing.T) {
 		t.Errorf("expected cred_id %d, got %d", targetId, cr2.Credentials[0].CredId)
 	}
 
-	// Cred được extend: ~7200s
+	// Cred được extend: cộng dồn ~7260s (60 cũ + 7200 mới)
 	var ext models.ProxyCredential
 	db.DB.First(&ext, targetId)
 	if ext.ExpiresAt == nil {
 		t.Fatal("extended cred should have expires_at")
 	}
 	rem := time.Until(*ext.ExpiresAt)
-	if rem < 7000*time.Second || rem > 7200*time.Second {
-		t.Errorf("extended cred: expected ~7200s, got %v", rem)
+	if rem < 7250*time.Second || rem > 7270*time.Second {
+		t.Errorf("extended cred: expected ~7260s (60 + 7200), got %v", rem)
 	}
 
 	// 2 cred còn lại: vẫn giữ TTL cũ ~60s
@@ -395,6 +397,90 @@ func TestExtend_SpecificCredIds(t *testing.T) {
 			t.Errorf("cred %d should still be ~60s, got %v (extend leaked?)", c.CredId, rem)
 		}
 	}
+}
+
+// TestExtend_CumulativeMultipleCalls — gọi extend nhiều lần phải cộng dồn,
+// không reset về giá trị mới nhất.
+func TestExtend_CumulativeMultipleCalls(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedConnectedSessions(t, 3)
+	testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", map[string]any{"iuser_id": "user-cum", "count": 1, "ttl": 100}, rk.Tok)
+
+	// Extend +200 → 100+200 = 300s
+	testutil.DoJSON(t, rk.R, "POST", "/api/v1/extend", map[string]any{"iuser_id": "user-cum", "ttl": 200}, rk.Tok)
+	// Extend +500 → 300+500 = 800s
+	testutil.DoJSON(t, rk.R, "POST", "/api/v1/extend", map[string]any{"iuser_id": "user-cum", "ttl": 500}, rk.Tok)
+	// Extend +1000 → 800+1000 = 1800s
+	testutil.DoJSON(t, rk.R, "POST", "/api/v1/extend", map[string]any{"iuser_id": "user-cum", "ttl": 1000}, rk.Tok)
+
+	var c models.ProxyCredential
+	db.DB.Where("i_user_id = ?", "user-cum").First(&c)
+	rem := time.Until(*c.ExpiresAt)
+	// 100 + 200 + 500 + 1000 = 1800s. Cho phép sai số ±10s.
+	if rem < 1790*time.Second || rem > 1810*time.Second {
+		t.Errorf("expected ~1800s cumulative, got %v", rem)
+	}
+}
+
+// TestExtend_NullTTLSkipped — cred không có TTL (never expires) không bị extend,
+// giữ nguyên NULL.
+func TestExtend_NullTTLSkipped(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedConnectedSessions(t, 3)
+
+	// Claim với ttl=0 → expires_at NULL (vô thời hạn)
+	testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", map[string]any{"iuser_id": "user-null", "count": 1, "ttl": 0}, rk.Tok)
+
+	w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/extend", map[string]any{"iuser_id": "user-null", "ttl": 3600}, rk.Tok)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	resp := testutil.ParseResponse(t, w)
+	var body map[string]any
+	json.Unmarshal(resp.Data, &body)
+	if skipped, ok := body["skipped_no_ttl"].(float64); !ok || skipped != 1 {
+		t.Errorf("expected skipped_no_ttl=1, got %v", body["skipped_no_ttl"])
+	}
+
+	var c models.ProxyCredential
+	db.DB.Where("i_user_id = ?", "user-null").First(&c)
+	if c.ExpiresAt != nil {
+		t.Errorf("NULL TTL cred should stay NULL, got %v", c.ExpiresAt)
+	}
+}
+
+// TestExtend_ExpiredCredStartsFromNow — cred đã quá hạn → extend tính từ now
+// (không phải base trong quá khứ).
+func TestExtend_ExpiredCredStartsFromNow(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedConnectedSessions(t, 3)
+	testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", map[string]any{"iuser_id": "user-exp", "count": 1, "ttl": 60}, rk.Tok)
+
+	// Force expire bằng cách backdate
+	past := time.Now().Add(-1 * time.Hour)
+	db.DB.Model(&models.ProxyCredential{}).Where("i_user_id = ?", "user-exp").Update("expires_at", past)
+
+	// Extend +3600. Vì base quá khứ → tính từ now → ~3600s từ giờ
+	testutil.DoJSON(t, rk.R, "POST", "/api/v1/extend", map[string]any{
+		"iuser_id": "user-exp", "ttl": 3600,
+		"cred_ids": []uint{getCredId(t, "user-exp")},
+	}, rk.Tok)
+
+	var c models.ProxyCredential
+	db.DB.Where("i_user_id = ?", "user-exp").First(&c)
+	rem := time.Until(*c.ExpiresAt)
+	if rem < 3590*time.Second || rem > 3610*time.Second {
+		t.Errorf("expired cred should reset from now: expected ~3600s, got %v", rem)
+	}
+}
+
+func getCredId(t *testing.T, iuser string) uint {
+	t.Helper()
+	var c models.ProxyCredential
+	if err := db.DB.Where("i_user_id = ?", iuser).First(&c).Error; err != nil {
+		t.Fatalf("getCredId: %v", err)
+	}
+	return c.Id
 }
 
 // TestExtend_WrongOwner — cred_ids của iuser khác → reject.
