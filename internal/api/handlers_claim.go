@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/tkiet2105/bestphone-pppoe/internal/activity"
 	"github.com/tkiet2105/bestphone-pppoe/internal/db"
 	"github.com/tkiet2105/bestphone-pppoe/internal/models"
 	proxysrv "github.com/tkiet2105/bestphone-pppoe/internal/proxy/server"
@@ -187,6 +188,12 @@ func ClaimCredentials(c *gin.Context) {
 
 	proxies := availableProxiesForType(usedProxyIds, need, sessType)
 	if len(proxies) < need {
+		activity.Warn(activity.CategoryClaim, "insufficient_slots",
+			fmt.Sprintf("Claim type=%s cho iuser=%s thiếu slot: cần thêm %d, còn %d",
+				sessType, req.IUserId, need, len(proxies)),
+			activity.IUserId(req.IUserId), activity.ClientIP(c.ClientIP()),
+			activity.F("type", sessType), activity.F("need", need),
+			activity.F("available", len(proxies)))
 		fail(c, 400, fmt.Sprintf("không đủ sessions type=%s: đã có %d creds, cần thêm %d, chỉ còn %d slot",
 			sessType, len(existing), need, len(proxies)))
 		return
@@ -218,6 +225,12 @@ func ClaimCredentials(c *gin.Context) {
 	}
 
 	all := append(existing, newCreds...)
+	activity.Info(activity.CategoryClaim, "ok",
+		fmt.Sprintf("Claim thành công: iuser=%s, type=%s, cấp %d cred mới (tổng %d)",
+			req.IUserId, sessType, len(newCreds), len(all)),
+		activity.IUserId(req.IUserId), activity.ClientIP(c.ClientIP()),
+		activity.F("type", sessType), activity.F("new_count", len(newCreds)),
+		activity.F("total_count", len(all)))
 	ok(c, gin.H{"iuser_id": req.IUserId, "type": sessType, "credentials": buildCredResponses(all)})
 }
 
@@ -302,6 +315,11 @@ func ChangeCredentials(c *gin.Context) {
 		usedProxyIds = append(usedProxyIds, fresh[0].Id)
 	}
 
+	activity.Info(activity.CategoryClaim, "change",
+		fmt.Sprintf("Change credentials: iuser=%s, đổi %d cred", req.IUserId, len(newCreds)),
+		activity.IUserId(req.IUserId), activity.ClientIP(c.ClientIP()),
+		activity.F("changed_count", len(newCreds)),
+		activity.F("old_cred_ids", req.CredIds))
 	ok(c, gin.H{"iuser_id": req.IUserId, "credentials": buildCredResponses(newCreds)})
 }
 
@@ -367,7 +385,21 @@ func ReleaseCredentials(c *gin.Context) {
 		proxysrv.M.ReloadCreds(pid)
 	}
 
+	if released > 0 {
+		activity.Info(activity.CategoryClaim, "release",
+			fmt.Sprintf("Release %d cred của iuser=%s (type=%s)", released, req.IUserId,
+				ternaryStr(req.Type == "", "tất cả", req.Type)),
+			activity.IUserId(req.IUserId), activity.ClientIP(c.ClientIP()),
+			activity.F("type", req.Type), activity.F("released", released))
+	}
 	ok(c, gin.H{"iuser_id": req.IUserId, "type": req.Type, "released": released})
+}
+
+func ternaryStr(cond bool, a, b string) string {
+	if cond {
+		return a
+	}
+	return b
 }
 
 type extendReq struct {
@@ -528,5 +560,12 @@ func ExtendCredentials(c *gin.Context) {
 	db.DB.Model(&models.ProxyCredential{}).Where("id IN ?", ids).Update("expires_at", exp)
 
 	updated := activeCredsForUserByType(req.IUserId, req.Type)
+	activity.Info(activity.CategoryClaim, "extend",
+		fmt.Sprintf("Extend %d cred của iuser=%s thêm %ds (type=%s)",
+			len(updated), req.IUserId, req.Ttl, ternaryStr(req.Type == "", "tất cả", req.Type)),
+		activity.IUserId(req.IUserId), activity.ClientIP(c.ClientIP()),
+		activity.F("type", req.Type), activity.F("ttl_seconds", req.Ttl),
+		activity.F("extended_count", len(updated)),
+		activity.F("new_expires_at", exp.Format(time.RFC3339)))
 	ok(c, gin.H{"iuser_id": req.IUserId, "type": req.Type, "credentials": buildCredResponses(updated)})
 }

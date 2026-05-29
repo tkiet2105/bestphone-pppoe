@@ -29,7 +29,7 @@ func SetupTestDB(t *testing.T) *gorm.DB {
 	if err := g.AutoMigrate(
 		&models.Line{}, &models.Session{}, &models.Proxy{},
 		&models.ProxyCredential{}, &models.Token{}, &models.AccessRule{},
-		&models.User{}, &models.AuditLog{}, &models.Setting{},
+		&models.User{}, &models.AuditLog{}, &models.ActivityLog{}, &models.Setting{},
 	); err != nil {
 		t.Fatalf("automigrate: %v", err)
 	}

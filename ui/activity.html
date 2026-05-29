@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Hoạt động — bestphone-pppoe</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <style>
+    .ac-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    .ac-toolbar select, .ac-toolbar input { max-width: 200px; }
+    .ac-table { width: 100%; }
+    .ac-table td, .ac-table th { padding: 6px 10px; font-size: 12.5px; vertical-align: top; }
+    .ac-time { white-space: nowrap; font-family: 'SF Mono', Monaco, monospace; font-size: 11.5px; color: #94a3b8; }
+    .ac-summary { color: #e2e8f0; line-height: 1.45; }
+    .ac-details { display: block; margin-top: 4px; font-family: 'SF Mono', Monaco, monospace; font-size: 11px; color: #64748b; word-break: break-all; }
+    .ac-ref { display: inline-block; padding: 1px 6px; border-radius: 3px; background: #1e293b; color: #cbd5e1; font-size: 10.5px; margin-right: 4px; font-family: 'SF Mono', Monaco, monospace; }
+    .ac-ref a { color: inherit; text-decoration: none; }
+    .ac-ref a:hover { text-decoration: underline; }
+
+    .lvl-info  { background: #475569; color: #e2e8f0; }
+    .lvl-warn  { background: #f59e0b; color: #fff; }
+    .lvl-error { background: #dc2626; color: #fff; }
+    .lvl-badge { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; }
+
+    .cat-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; background: #334155; color: #cbd5e1; font-size: 10.5px; font-weight: 600; }
+    .cat-dial      { background: #1e3a8a; color: #bfdbfe; }
+    .cat-rotate    { background: #581c87; color: #e9d5ff; }
+    .cat-reconnect { background: #7c2d12; color: #fed7aa; }
+    .cat-watchdog  { background: #064e3b; color: #a7f3d0; }
+    .cat-claim     { background: #166534; color: #bbf7d0; }
+    .cat-cred      { background: #134e4a; color: #99f6e4; }
+    .cat-session   { background: #312e81; color: #c7d2fe; }
+    .cat-line      { background: #831843; color: #fbcfe8; }
+    .cat-auth      { background: #713f12; color: #fde68a; }
+    .cat-proxy     { background: #5b21b6; color: #ddd6fe; }
+
+    .ac-pager { display: flex; gap: 8px; align-items: center; margin-top: 10px; justify-content: flex-end; font-size: 12px; color: #94a3b8; }
+    .ac-empty { padding: 32px; text-align: center; color: #64748b; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="card">
+      <h2>Hoạt động hệ thống</h2>
+      <p class="muted small">
+        Lịch sử mọi sự kiện diagnostic: quay số, đổi IP, reconnect, claim/release proxy, tạo/xóa session/line.
+        Khi có session lỗi → filter theo session_id để xem chuỗi sự kiện dẫn đến lỗi. Lưu giữ tối đa <b>30 ngày</b>.
+      </p>
+
+      <div class="ac-toolbar">
+        <select id="ac-level">
+          <option value="">Mọi mức độ</option>
+          <option value="info">Info</option>
+          <option value="warn">Warn</option>
+          <option value="error">Error</option>
+        </select>
+
+        <select id="ac-category">
+          <option value="">Mọi loại</option>
+          <option value="dial">Dial (quay số)</option>
+          <option value="rotate">Rotate (đổi IP)</option>
+          <option value="reconnect">Reconnect (kết nối lại)</option>
+          <option value="watchdog">Watchdog (giám sát)</option>
+          <option value="claim">Claim (cấp proxy)</option>
+          <option value="cred">Cred (tài khoản proxy)</option>
+          <option value="session">Session (phiên)</option>
+          <option value="line">Line (đường truyền)</option>
+          <option value="auth">Auth (đăng nhập)</option>
+          <option value="proxy">Proxy</option>
+        </select>
+
+        <input type="number" id="ac-session" placeholder="Session #" min="1">
+        <input type="text" id="ac-iuser" placeholder="iuser_id">
+        <input type="text" id="ac-q" placeholder="Tìm từ khóa trong summary">
+
+        <select id="ac-limit">
+          <option value="100">100 dòng</option>
+          <option value="200" selected>200 dòng</option>
+          <option value="500">500 dòng</option>
+          <option value="1000">1000 dòng</option>
+        </select>
+
+        <button onclick="loadActivity()">🔄 Tải lại</button>
+        <label class="inline" style="font-size:12.5px;color:#94a3b8"><input type="checkbox" id="ac-auto"> Auto refresh 5s</label>
+        <span class="spacer" style="flex:1"></span>
+        <span id="ac-stats" class="muted small"></span>
+      </div>
+
+      <table class="ac-table">
+        <thead>
+          <tr>
+            <th style="width:120px">Thời gian</th>
+            <th style="width:60px">Mức</th>
+            <th style="width:110px">Loại</th>
+            <th>Tóm tắt</th>
+          </tr>
+        </thead>
+        <tbody id="ac-body">
+          <tr><td colspan="4" class="ac-empty">Đang tải...</td></tr>
+        </tbody>
+      </table>
+
+      <div class="ac-pager">
+        <button class="secondary" onclick="prevPage()">‹ Trang trước</button>
+        <span id="ac-page-info">trang 1</span>
+        <button class="secondary" onclick="nextPage()">Trang sau ›</button>
+      </div>
+    </div>
+  </main>
+
+  <script src="/js/api-client.js"></script>
+  <script src="/js/activity.js"></script>
+</body>
+</html>

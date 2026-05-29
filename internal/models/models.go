@@ -205,3 +205,27 @@ type AuditLog struct {
 	Summary      string    `gorm:"size:256" json:"summary"`
 	CreatedAt    time.Time `gorm:"index" json:"created_at"`
 }
+
+// ActivityLog — sự kiện hệ thống có giá trị diagnostic, persist trong DB.
+// Khác AuditLog (chỉ ghi HTTP request có token): ActivityLog ghi mọi state
+// transition của session/proxy/cred kể cả các action background (watchdog,
+// auto-rotate, reconnect). Mục đích: khi có vấn đề, người dùng mở trang Hoạt
+// động xem ngay "session #X đang bị gì, ai làm gì lúc nào".
+//
+// Lifecycle: cleanup goroutine xóa entry > 30 ngày.
+type ActivityLog struct {
+	Id        uint      `gorm:"primaryKey" json:"id"`
+	CreatedAt time.Time `gorm:"index" json:"created_at"`
+	Level     string    `gorm:"size:8;index" json:"level"`    // info | warn | error
+	Category  string    `gorm:"size:16;index" json:"category"` // dial | rotate | reconnect | watchdog | claim | cred | session | line | auth
+	Action    string    `gorm:"size:32" json:"action"`         // free-form: "start" | "ip_assigned" | "blocked_ip" | "auth_nak" | ...
+	SessionId *uint     `gorm:"index" json:"session_id,omitempty"`
+	LineId    *uint     `gorm:"index" json:"line_id,omitempty"`
+	ProxyId   *uint     `gorm:"index" json:"proxy_id,omitempty"`
+	CredId    *uint     `gorm:"index" json:"cred_id,omitempty"`
+	UserId    *uint     `gorm:"index" json:"user_id,omitempty"`     // UI user (nếu xuất phát từ API)
+	IUserId   string    `gorm:"size:64;index" json:"iuser_id,omitempty"`
+	ClientIP  string    `gorm:"size:64" json:"client_ip,omitempty"` // nếu từ API
+	Summary   string    `gorm:"size:256" json:"summary"`            // tiếng Việt 1 dòng để UI hiển thị
+	Details   string    `gorm:"type:text" json:"details,omitempty"`  // JSON metadata phụ
+}

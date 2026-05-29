@@ -160,6 +160,7 @@ function renderSessions() {
         </label>
         <button class="small" onclick="rotateSession(${s.id})" title="Đổi IP công cộng">↻ Đổi IP</button>
         <button class="small btn-type" onclick="changeSessionType(${s.id}, '${s.type || 'rotating'}')" title="Đổi loại proxy">🏷 Loại</button>
+        <button class="small secondary" onclick="showSessionActivity(${s.id})" title="Lịch sử hoạt động của phiên này">📜 Sự kiện</button>
         <button class="small secondary" onclick="openSessionRules(${s.id})" title="Quản lý rule cho phiên này">🛡 Rule</button>
         <button class="small danger" onclick="deleteSession(${s.id})" title="Xóa phiên">✕ Xóa</button>
       </td>
@@ -530,6 +531,52 @@ async function submitCreateSession() {
     closeModal('create-sess-modal');
     loadSessions();
   } catch (e) { Toast.error('Lỗi tạo session: ' + e.message); }
+}
+
+// ─── Session activity modal ───
+async function showSessionActivity(id) {
+  try {
+    const res = await Api.getSessionActivity(id, 50);
+    const items = res.items || [];
+    const CAT = { dial:'Quay số', rotate:'Đổi IP', reconnect:'Reconnect', watchdog:'Watchdog', claim:'Claim', cred:'Tài khoản', session:'Session', line:'Line', auth:'Đăng nhập', proxy:'Proxy' };
+    let body;
+    if (items.length === 0) {
+      body = '<div class="muted" style="padding:16px;text-align:center">(Phiên này chưa có hoạt động nào được ghi nhận)</div>';
+    } else {
+      const rows = items.map(it => {
+        const t = new Date(it.created_at);
+        const time = t.toLocaleString('vi-VN', { hour12: false });
+        const lvlColor = it.level === 'error' ? '#fca5a5' : it.level === 'warn' ? '#fbbf24' : '#94a3b8';
+        let details = '';
+        if (it.details) {
+          try {
+            const o = JSON.parse(it.details);
+            const lines = Object.entries(o).map(([k,v]) => `${k}=${typeof v==='object'?JSON.stringify(v):v}`);
+            if (lines.length) details = `<div style="font-family:monospace;font-size:10.5px;color:#64748b;margin-top:2px;word-break:break-all">${escapeHTML(lines.join(' · '))}</div>`;
+          } catch {}
+        }
+        return `<div style="border-bottom:1px solid #1e293b;padding:6px 0">
+          <div style="display:flex;gap:8px;align-items:baseline">
+            <span style="font-family:monospace;font-size:11px;color:#94a3b8;white-space:nowrap">${time}</span>
+            <span style="color:${lvlColor};text-transform:uppercase;font-size:10.5px;font-weight:700">${escapeHTML(it.level)}</span>
+            <span style="background:#334155;color:#cbd5e1;font-size:10.5px;padding:1px 6px;border-radius:3px">${escapeHTML(CAT[it.category]||it.category)}</span>
+            <span style="font-family:monospace;font-size:10.5px;color:#64748b">${escapeHTML(it.action)}</span>
+          </div>
+          <div style="color:#e2e8f0;margin-top:3px;font-size:12.5px;line-height:1.45">${escapeHTML(it.summary)}</div>
+          ${details}
+        </div>`;
+      }).join('');
+      body = `<div style="max-height:60vh;overflow-y:auto">${rows}</div>`;
+    }
+    await Dialog.show({
+      title: `Hoạt động gần đây — Session #${id} (${items.length} sự kiện)`,
+      bodyHTML: body + `<div class="muted small" style="margin-top:8px"><a href="/activity.html?session=${id}">→ Xem đầy đủ trên trang Hoạt động</a></div>`,
+      actions: [{ label: 'Đóng', kind: 'primary', value: null }],
+      dismissValue: null,
+    });
+  } catch (e) {
+    Toast.error('Lỗi tải hoạt động: ' + e.message);
+  }
 }
 
 // ─── Session actions ───

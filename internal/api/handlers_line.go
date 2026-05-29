@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/tkiet2105/bestphone-pppoe/internal/activity"
 	"github.com/tkiet2105/bestphone-pppoe/internal/db"
 	"github.com/tkiet2105/bestphone-pppoe/internal/models"
 	"github.com/tkiet2105/bestphone-pppoe/internal/pppoe"
@@ -72,6 +73,12 @@ func CreateLine(c *gin.Context) {
 		fail(c, 500, err.Error())
 		return
 	}
+	activity.Info(activity.CategoryLine, "create",
+		fmt.Sprintf("Tạo line #%d: %s (iface=%s, max=%d)", line.Id, line.Name, line.Iface, line.MaxSessions),
+		activity.LineId(line.Id), activity.ClientIP(c.ClientIP()),
+		activity.F("name", line.Name), activity.F("iface", line.Iface),
+		activity.F("max_sessions", line.MaxSessions),
+		activity.F("mac_pool_size", len(models.ParseMacs(line.CustomMacs))))
 	ok(c, line)
 }
 
@@ -169,5 +176,9 @@ func DeleteLine(c *gin.Context) {
 		db.DB.Delete(&s)
 	}
 	db.DB.Delete(&models.Line{}, id)
+	activity.Warn(activity.CategoryLine, "delete",
+		fmt.Sprintf("Xóa line #%d và %d session liên quan", id, len(sessions)),
+		activity.LineId(uint(id)), activity.ClientIP(c.ClientIP()),
+		activity.F("cascaded_sessions", len(sessions)))
 	ok(c, gin.H{"deleted": id, "sessions": len(sessions)})
 }

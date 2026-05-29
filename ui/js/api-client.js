@@ -117,6 +117,13 @@ const Api = (() => {
     claimUserStatus: (iuserId) => _req('GET', `/claim/user-status?iuser_id=${encodeURIComponent(iuserId)}`),
     claimUsers: () => _req('GET', '/claim/users'),
 
+    // activity log
+    listActivity: (params) => {
+      const q = params ? '?' + new URLSearchParams(params).toString() : '';
+      return _req('GET', '/activity' + q);
+    },
+    getSessionActivity: (sid, limit) => _req('GET', `/sessions/${sid}/activity${limit?`?limit=${limit}`:''}`),
+
     // tokens
     listTokens: () => _req('GET', '/tokens'),
     createToken: (label) => _req('POST', '/tokens', { label }),
@@ -361,6 +368,7 @@ function renderNav(active) {
         <a href="/rules.html" class="${active==='rules'?'active':''}">Rules</a>
         <a href="/export.html" class="${active==='export'?'active':''}">Xuất proxy</a>
         <a href="/logs.html" class="${active==='logs'?'active':''}">Logs</a>
+        <a href="/activity.html" class="${active==='activity'?'active':''}">Hoạt động</a>
         <a href="/users.html" class="${active==='users'?'active':''}">Users</a>
         <a href="/api.html" class="${active==='api'?'active':''}">API</a>
         <a href="/settings.html" class="${active==='settings'?'active':''}">Cài đặt</a>

@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/tkiet2105/bestphone-pppoe/internal/activity"
 	"github.com/tkiet2105/bestphone-pppoe/internal/api"
 	"github.com/tkiet2105/bestphone-pppoe/internal/config"
 	"github.com/tkiet2105/bestphone-pppoe/internal/db"
@@ -21,7 +22,7 @@ import (
 )
 
 // appVersion phải khớp với /VERSION ở repo root. Bump cả 2 cùng lúc khi ready-to-ship.
-const appVersion = "1.8.1"
+const appVersion = "1.8.2"
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
@@ -44,6 +45,7 @@ func main() {
 	api.SetEventHub(hub)
 	api.AppVersion = appVersion
 
+	activity.Init(db.DB, hub)
 	pppoe.Init(db.DB, hub, cfg.DialConcurrent, cfg.RotateNewIP)
 	proxysrv.Init(db.DB, hub, cfg.ProxyPortMin, cfg.ProxyPortMax)
 
@@ -58,6 +60,21 @@ func main() {
 	pppoe.M.StartWatchdog(ctx)
 	pppoe.M.StartAutoRotate(ctx)
 	proxysrv.M.StartCredCleanup(ctx)
+
+	// ActivityLog cleanup: chạy mỗi 6h, xóa entry cũ hơn 30 ngày
+	go func() {
+		t := time.NewTicker(6 * time.Hour)
+		defer t.Stop()
+		activity.CleanupOld(30 * 24 * time.Hour) // chạy ngay lần đầu
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				activity.CleanupOld(30 * 24 * time.Hour)
+			}
+		}
+	}()
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()

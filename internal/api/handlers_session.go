@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/tkiet2105/bestphone-pppoe/internal/activity"
 	"github.com/tkiet2105/bestphone-pppoe/internal/db"
 	"github.com/tkiet2105/bestphone-pppoe/internal/models"
 	"github.com/tkiet2105/bestphone-pppoe/internal/pppoe"
@@ -364,6 +365,10 @@ func DeleteSession(c *gin.Context) {
 	pppoe.RemoveMacvlan(s.Id)
 	pppoe.RemoveSessionSecrets(s.Username)
 	db.DB.Delete(&s)
+	activity.Info(activity.CategorySession, "delete",
+		fmt.Sprintf("Xóa session #%d (line #%d, user=%s, MAC=%s)", s.Id, s.LineId, s.Username, s.MAC),
+		activity.SessionId(s.Id), activity.LineId(s.LineId), activity.ClientIP(c.ClientIP()),
+		activity.F("isp_user", s.Username), activity.F("mac", s.MAC))
 	ok(c, gin.H{"deleted": id})
 }
 
@@ -551,10 +556,15 @@ func SetSessionType(c *gin.Context) {
 			return
 		}
 	}
+	oldType := s.Type
 	if err := db.DB.Model(&s).Update("type", req.Type).Error; err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
+	activity.Info(activity.CategorySession, "set_type",
+		fmt.Sprintf("Đổi type session #%d: %s → %s", id, oldType, req.Type),
+		activity.SessionId(uint(id)), activity.ClientIP(c.ClientIP()),
+		activity.F("old_type", oldType), activity.F("new_type", req.Type))
 	ok(c, gin.H{"session_id": id, "type": req.Type})
 }
 

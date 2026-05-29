@@ -12,6 +12,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/tkiet2105/bestphone-pppoe/internal/activity"
 	"github.com/tkiet2105/bestphone-pppoe/internal/db"
 	"github.com/tkiet2105/bestphone-pppoe/internal/events"
 	"github.com/tkiet2105/bestphone-pppoe/internal/models"
@@ -73,15 +74,26 @@ func (m *Manager) Dial(sessionID uint) error {
 
 	m.setStatus(&sess, models.StatusDialing, "")
 
+	activity.Info(activity.CategoryDial, "start",
+		fmt.Sprintf("Bắt đầu quay số session #%d (line: %s, iface: %s)", sess.Id, line.Name, line.Iface),
+		activity.SessionId(sess.Id), activity.LineId(line.Id),
+		activity.F("iface", line.Iface), activity.F("isp_user", sess.Username), activity.F("mac", sess.MAC))
+
 	if sess.MAC != "" {
 		if err := ensureMacvlan(line.Iface, MacvlanName(sess.Id), sess.MAC); err != nil {
 			m.setStatus(&sess, models.StatusError, "macvlan: "+err.Error())
+			activity.Error(activity.CategoryDial, "macvlan_fail",
+				fmt.Sprintf("Tạo macvlan thất bại cho session #%d: %s", sess.Id, err.Error()),
+				activity.SessionId(sess.Id), activity.LineId(line.Id), activity.F("error", err.Error()))
 			return err
 		}
 	}
 
 	if err := WritePeerFile(&line, &sess); err != nil {
 		m.setStatus(&sess, models.StatusError, err.Error())
+		activity.Error(activity.CategoryDial, "peer_file_fail",
+			fmt.Sprintf("Ghi peer file thất bại cho session #%d: %s", sess.Id, err.Error()),
+			activity.SessionId(sess.Id), activity.LineId(line.Id), activity.F("error", err.Error()))
 		return err
 	}
 
@@ -97,6 +109,10 @@ func (m *Manager) Dial(sessionID uint) error {
 		}
 		shortMsg := classifyPppdError(errMsg)
 		m.setStatus(&sess, models.StatusError, shortMsg)
+		activity.Error(activity.CategoryDial, "pppd_fail",
+			fmt.Sprintf("pppd thất bại session #%d: %s", sess.Id, shortMsg),
+			activity.SessionId(sess.Id), activity.LineId(line.Id),
+			activity.F("reason", shortMsg), activity.F("pppd_output", truncateStr(errMsg, 500)))
 		return fmt.Errorf("pppd: %s", shortMsg)
 	}
 
@@ -111,8 +127,12 @@ func (m *Manager) Dial(sessionID uint) error {
 	}
 	if !IsIfaceUp(ifaceName) {
 		m.hangupPeer(peerName)
-		m.setStatus(&sess, models.StatusError, "iface "+ifaceName+" did not come UP")
-		return fmt.Errorf("iface %s did not come UP", ifaceName)
+		errMsg := "iface " + ifaceName + " did not come UP"
+		m.setStatus(&sess, models.StatusError, errMsg)
+		activity.Error(activity.CategoryDial, "iface_not_up",
+			fmt.Sprintf("Session #%d: interface %s không UP sau 15s", sess.Id, ifaceName),
+			activity.SessionId(sess.Id), activity.LineId(line.Id), activity.F("iface", ifaceName))
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	wanIP := IfaceIPv4(ifaceName)
@@ -122,6 +142,9 @@ func (m *Manager) Dial(sessionID uint) error {
 		m.hangupPeer(peerName)
 		errMsg := fmt.Sprintf("ISP cấp IP CGNAT/private (%s) - không dùng được", wanIP)
 		m.setStatus(&sess, models.StatusError, errMsg)
+		activity.Error(activity.CategoryDial, "blocked_ip",
+			fmt.Sprintf("Session #%d bị từ chối vì ISP cấp IP CGNAT/private: %s", sess.Id, wanIP),
+			activity.SessionId(sess.Id), activity.LineId(line.Id), activity.F("blocked_ip", wanIP))
 		return fmt.Errorf("%s", errMsg)
 	}
 
@@ -138,19 +161,31 @@ func (m *Manager) Dial(sessionID uint) error {
 	m.publish("session.status", map[string]any{
 		"session_id": sess.Id, "status": sess.Status, "iface": sess.Iface, "ip": sess.IP,
 	})
+	activity.Info(activity.CategoryDial, "connected",
+		fmt.Sprintf("Session #%d kết nối thành công: iface=%s, IP=%s", sess.Id, ifaceName, wanIP),
+		activity.SessionId(sess.Id), activity.LineId(line.Id),
+		activity.F("iface", ifaceName), activity.F("ip", wanIP))
 
 	// Public IP async — không block dial result
 	go m.probePublicIP(sess.Id, ifaceName)
 	return nil
 }
 
+
 func (m *Manager) probePublicIP(sessionID uint, iface string) {
 	ip, err := PublicIPViaIface(context.Background(), iface, 10*time.Second)
 	if err != nil || ip == "" {
+		activity.Warn(activity.CategoryDial, "public_ip_probe_fail",
+			fmt.Sprintf("Session #%d: không kiểm tra được public IP qua %s", sessionID, iface),
+			activity.SessionId(sessionID), activity.F("iface", iface),
+			activity.F("error", fmt.Sprintf("%v", err)))
 		return
 	}
 	m.db.Model(&models.Session{}).Where("id = ?", sessionID).Update("public_ip", ip)
 	m.publish("session.public_ip", map[string]any{"session_id": sessionID, "public_ip": ip})
+	activity.Info(activity.CategoryDial, "public_ip_ok",
+		fmt.Sprintf("Session #%d có public IP: %s", sessionID, ip),
+		activity.SessionId(sessionID), activity.F("public_ip", ip))
 }
 
 // Hangup — kill pppd process cho session này. Idempotent.
@@ -159,6 +194,7 @@ func (m *Manager) Hangup(sessionID uint) error {
 	if err := m.db.First(&sess, sessionID).Error; err != nil {
 		return err
 	}
+	oldIP := sess.IP
 	peerName := fmt.Sprintf("bp-sess-%d", sess.Id)
 	m.hangupPeer(peerName)
 	if sess.Iface != "" {
@@ -169,6 +205,9 @@ func (m *Manager) Hangup(sessionID uint) error {
 	sess.IP = ""
 	m.db.Save(&sess)
 	m.publish("session.status", map[string]any{"session_id": sess.Id, "status": sess.Status})
+	activity.Info(activity.CategoryDial, "hangup",
+		fmt.Sprintf("Session #%d đã ngắt (IP cũ: %s)", sess.Id, oldIP),
+		activity.SessionId(sess.Id), activity.LineId(sess.LineId), activity.F("old_ip", oldIP))
 	return nil
 }
 
@@ -190,6 +229,9 @@ func (m *Manager) Rotate(sessionID uint) (oldIP, newIP string, err error) {
 		return "", "", err
 	}
 	oldIP = sess.PublicIP
+	activity.Info(activity.CategoryRotate, "start",
+		fmt.Sprintf("Bắt đầu đổi IP session #%d (IP cũ: %s)", sessionID, oldIP),
+		activity.SessionId(sessionID), activity.LineId(sess.LineId), activity.F("old_ip", oldIP))
 	_ = m.Hangup(sessionID)
 	time.Sleep(3 * time.Second) // BRAS settle
 	// Clear error trước khi redial (override AuthNak lockout: caller chịu trách nhiệm)
@@ -198,6 +240,10 @@ func (m *Manager) Rotate(sessionID uint) (oldIP, newIP string, err error) {
 	m.db.Model(&models.Session{}).Where("id = ?", sessionID).Update("last_rotate_at", &now)
 	if err := m.Dial(sessionID); err != nil {
 		m.db.Model(&models.Session{}).Where("id = ?", sessionID).Update("rotate_fail_count", gorm.Expr("rotate_fail_count + 1"))
+		activity.Error(activity.CategoryRotate, "fail",
+			fmt.Sprintf("Đổi IP session #%d thất bại: %s", sessionID, err.Error()),
+			activity.SessionId(sessionID), activity.LineId(sess.LineId),
+			activity.F("old_ip", oldIP), activity.F("error", err.Error()))
 		return oldIP, "", err
 	}
 	m.db.First(&sess, sessionID)
@@ -205,6 +251,17 @@ func (m *Manager) Rotate(sessionID uint) (oldIP, newIP string, err error) {
 	m.publish("session.rotate", map[string]any{
 		"session_id": sessionID, "old_ip": oldIP, "new_ip": newIP, "same_ip": oldIP == newIP,
 	})
+	if oldIP != "" && oldIP == newIP {
+		activity.Warn(activity.CategoryRotate, "same_ip",
+			fmt.Sprintf("Session #%d đổi IP nhưng nhận lại IP cũ: %s", sessionID, newIP),
+			activity.SessionId(sessionID), activity.LineId(sess.LineId),
+			activity.F("old_ip", oldIP), activity.F("new_ip", newIP))
+	} else {
+		activity.Info(activity.CategoryRotate, "ok",
+			fmt.Sprintf("Session #%d đã đổi IP: %s → %s", sessionID, oldIP, newIP),
+			activity.SessionId(sessionID), activity.LineId(sess.LineId),
+			activity.F("old_ip", oldIP), activity.F("new_ip", newIP))
+	}
 	return oldIP, newIP, nil
 }
 
@@ -268,6 +325,9 @@ func (m *Manager) autoRotateOnce() {
 			defer wg.Done()
 			defer func() { <-sem }()
 			log.Printf("[auto-rotate] session %d due (interval=%ds, last=%v)", sid, interval, baseline.Format(time.RFC3339))
+			activity.Info(activity.CategoryRotate, "auto_due",
+				fmt.Sprintf("Session #%d đến hạn auto-rotate (chu kỳ %ds)", sid, interval),
+				activity.SessionId(sid), activity.F("interval_seconds", interval))
 			if _, _, err := m.Rotate(sid); err != nil {
 				log.Printf("[auto-rotate] session %d failed, pausing auto-rotate: %v", sid, err)
 				m.db.Model(&models.Session{}).Where("id = ?", sid).Updates(map[string]any{
@@ -277,6 +337,9 @@ func (m *Manager) autoRotateOnce() {
 				m.publish("session.auto_rotate_paused", map[string]any{
 					"session_id": sid, "reason": err.Error(),
 				})
+				activity.Warn(activity.CategoryRotate, "auto_paused",
+					fmt.Sprintf("Session #%d auto-rotate bị tạm dừng do lỗi: %s", sid, err.Error()),
+					activity.SessionId(sid), activity.F("error", err.Error()))
 			}
 		}()
 	}
@@ -299,6 +362,9 @@ func (m *Manager) reconcileOnce() {
 			m.publish("session.status", map[string]any{
 				"session_id": s.Id, "status": models.StatusError, "error": errMsg,
 			})
+			activity.Warn(activity.CategoryWatchdog, "demote_blocked_ip",
+				fmt.Sprintf("Session #%d bị watchdog demote vì IP %s nằm trong dải bị chặn", s.Id, s.IP),
+				activity.SessionId(s.Id), activity.F("blocked_ip", s.IP))
 			continue
 		}
 		if s.Iface == "" {
@@ -308,6 +374,9 @@ func (m *Manager) reconcileOnce() {
 			continue
 		}
 		log.Printf("[watchdog] session %d iface %s DOWN — redial", s.Id, s.Iface)
+		activity.Warn(activity.CategoryWatchdog, "iface_down_redial",
+			fmt.Sprintf("Session #%d: interface %s đã DOWN, watchdog quay số lại", s.Id, s.Iface),
+			activity.SessionId(s.Id), activity.F("iface", s.Iface))
 		go func(sid uint) {
 			if err := m.Dial(sid); err != nil {
 				log.Printf("[watchdog] redial session %d failed: %v", sid, err)
@@ -336,6 +405,9 @@ func (m *Manager) reconnectErrorSessions() {
 		sid := s.Id
 		attempt := s.ReconnectAttempts + 1
 		log.Printf("[reconnect] session %d attempt %d/%d", sid, attempt, maxRetries)
+		activity.Info(activity.CategoryReconnect, "attempt",
+			fmt.Sprintf("Session #%d: reconnect lần %d/%d", sid, attempt, maxRetries),
+			activity.SessionId(sid), activity.F("attempt", attempt), activity.F("max", maxRetries))
 
 		if err := m.Dial(sid); err != nil {
 			nextAt := now.Add(time.Duration(pauseMinutes) * time.Minute)
@@ -349,6 +421,16 @@ func (m *Manager) reconnectErrorSessions() {
 				"session_id": sid, "attempt": attempt, "max": maxRetries,
 				"next_at": nextAt.Format(time.RFC3339), "error": err.Error(),
 			})
+			lvl := activity.Warn
+			if attempt >= maxRetries {
+				lvl = activity.Error
+			}
+			lvl(activity.CategoryReconnect, "fail",
+				fmt.Sprintf("Session #%d reconnect lần %d/%d thất bại, thử lại lúc %s: %s",
+					sid, attempt, maxRetries, nextAt.Format("15:04:05"), err.Error()),
+				activity.SessionId(sid), activity.F("attempt", attempt),
+				activity.F("max", maxRetries), activity.F("next_at", nextAt.Format(time.RFC3339)),
+				activity.F("error", err.Error()))
 		} else {
 			var updated models.Session
 			m.db.First(&updated, sid)
@@ -356,6 +438,10 @@ func (m *Manager) reconnectErrorSessions() {
 			m.publish("session.reconnect_ok", map[string]any{
 				"session_id": sid, "ip": updated.IP,
 			})
+			activity.Info(activity.CategoryReconnect, "ok",
+				fmt.Sprintf("Session #%d reconnect thành công (IP=%s)", sid, updated.IP),
+				activity.SessionId(sid), activity.F("ip", updated.IP),
+				activity.F("attempt", attempt))
 		}
 	}
 }
@@ -452,6 +538,13 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+func truncateStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 // classifyPppdError — extract short hint từ pppd verbose log.

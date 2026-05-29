@@ -31,7 +31,7 @@ func Init(dbPath string) error {
 	sqlDB, _ := g.DB()
 	sqlDB.SetMaxOpenConns(1) // SQLite không thích nhiều writer
 	DB = g
-	if err := DB.AutoMigrate(&models.Line{}, &models.Session{}, &models.Proxy{}, &models.ProxyCredential{}, &models.Token{}, &models.AccessRule{}, &models.User{}, &models.AuditLog{}, &models.Setting{}); err != nil {
+	if err := DB.AutoMigrate(&models.Line{}, &models.Session{}, &models.Proxy{}, &models.ProxyCredential{}, &models.Token{}, &models.AccessRule{}, &models.User{}, &models.AuditLog{}, &models.ActivityLog{}, &models.Setting{}); err != nil {
 		return fmt.Errorf("automigrate: %w", err)
 	}
 	// Backfill 1-shot: nếu có column legacy isp_username/isp_password (từ v1.2.x),
