@@ -17,7 +17,7 @@ async function init() {
   await loadSessions();
   Api.subscribeEvents((type) => {
     if (['session.status', 'session.public_ip', 'session.rotate', 'session.auto_rotate_paused', 'session.reconnect_failed', 'session.reconnect_ok', 'proxy.started', 'proxy.stopped'].includes(type)) {
-      loadSessions();
+      scheduleLoadSessions();
     }
   });
   document.getElementById('filter-line').addEventListener('change', loadSessions);
@@ -25,6 +25,30 @@ async function init() {
   const ft = document.getElementById('filter-type');
   if (ft) ft.addEventListener('change', loadSessions);
   _initSelectionUX();
+}
+
+// ─── scheduleLoadSessions — debounce với max-wait cap ───
+// Khi rotate batch hoặc auto-rotate cùng lúc nhiều session, mỗi session emit
+// ~5 SSE events (status×3 + public_ip + rotate). 150 session → ~750 events
+// → trước đây fetch /sessions 750 lần spam server. Debounce:
+//   - Trailing edge: gộp burst events trong 800ms thành 1 fetch
+//   - Max wait 3s: nếu events liên tục streaming, vẫn fire mỗi 3s để UI không
+//     "đông cứng" quá lâu
+let _loadSessionsTimer = null;
+let _loadSessionsFirstScheduled = 0;
+const _LOAD_DEBOUNCE_MS = 800;
+const _LOAD_MAX_WAIT_MS = 3000;
+function scheduleLoadSessions() {
+  const now = Date.now();
+  if (!_loadSessionsFirstScheduled) _loadSessionsFirstScheduled = now;
+  if (_loadSessionsTimer) clearTimeout(_loadSessionsTimer);
+  const elapsed = now - _loadSessionsFirstScheduled;
+  const delay = Math.max(50, Math.min(_LOAD_DEBOUNCE_MS, _LOAD_MAX_WAIT_MS - elapsed));
+  _loadSessionsTimer = setTimeout(() => {
+    _loadSessionsTimer = null;
+    _loadSessionsFirstScheduled = 0;
+    loadSessions();
+  }, delay);
 }
 
 // ─── NIC panel ───
