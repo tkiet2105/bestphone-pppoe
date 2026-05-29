@@ -135,6 +135,7 @@ async function loadDetail() {
       <td>${fmtExpiry(c.expires_at)}</td>
       <td class="actions">
         <button class="small" onclick="changeCred(${c.cred_id})">Đổi IP</button>
+        <button class="small secondary" onclick="extendCred(${c.cred_id})" title="Gia hạn riêng cred này">⏱ Gia hạn</button>
         <button class="small danger" onclick="deleteCred(${c.cred_id})">Xóa</button>
       </td>
     </tr>`).join('');
@@ -146,6 +147,23 @@ async function loadDetail() {
 async function copyConnStr() {
   const text = document.getElementById('det-connstr').textContent;
   if (await copyText(text)) Toast.success('Đã sao chép');
+}
+
+async function extendCred(credId) {
+  if (!_detailUser) return;
+  const ttlStr = await Dialog.prompt(
+    `Gia hạn TTL (giây) cho cred <b>#${credId}</b>:\n\nLưu ý: TTL mới SET lại expires_at = now + ttl (không cộng dồn).`,
+    { title: 'Gia hạn 1 cred', defaultValue: '7200', okText: 'Gia hạn' }
+  );
+  if (ttlStr === null) return;
+  const ttl = parseInt(ttlStr) || 0;
+  if (ttl <= 0) { Toast.error('TTL phải > 0'); return; }
+  try {
+    await Api.extendCreds({ iuser_id: _detailUser, ttl, cred_ids: [credId] });
+    Toast.success(`Đã gia hạn cred #${credId} thêm ${ttl}s`);
+    loadDetail();
+    loadStatus();
+  } catch (e) { Toast.error(e.message); }
 }
 
 async function changeCred(credId) {

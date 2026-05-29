@@ -333,6 +333,92 @@ func TestExtend_Success(t *testing.T) {
 	}
 }
 
+// TestExtend_SpecificCredIds — gia hạn chỉ định subset cred_ids: cred trong list
+// được set TTL mới, cred khác giữ TTL cũ.
+func TestExtend_SpecificCredIds(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedConnectedSessions(t, 5)
+
+	claimBody := map[string]any{"iuser_id": "user-pick", "count": 3, "ttl": 60}
+	w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", claimBody, rk.Tok)
+	resp := testutil.ParseResponse(t, w)
+	var cr claimResponse
+	json.Unmarshal(resp.Data, &cr)
+	if len(cr.Credentials) != 3 {
+		t.Fatalf("expected 3 claims, got %d", len(cr.Credentials))
+	}
+
+	// Extend chỉ 1 cred giữa
+	targetId := cr.Credentials[1].CredId
+	extBody := map[string]any{
+		"iuser_id": "user-pick",
+		"ttl":      7200,
+		"cred_ids": []uint{targetId},
+	}
+	w2 := testutil.DoJSON(t, rk.R, "POST", "/api/v1/extend", extBody, rk.Tok)
+	if w2.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+	resp2 := testutil.ParseResponse(t, w2)
+	var cr2 claimResponse
+	json.Unmarshal(resp2.Data, &cr2)
+	if len(cr2.Credentials) != 1 {
+		t.Fatalf("expected 1 cred in response, got %d", len(cr2.Credentials))
+	}
+	if cr2.Credentials[0].CredId != targetId {
+		t.Errorf("expected cred_id %d, got %d", targetId, cr2.Credentials[0].CredId)
+	}
+
+	// Cred được extend: ~7200s
+	var ext models.ProxyCredential
+	db.DB.First(&ext, targetId)
+	if ext.ExpiresAt == nil {
+		t.Fatal("extended cred should have expires_at")
+	}
+	rem := time.Until(*ext.ExpiresAt)
+	if rem < 7000*time.Second || rem > 7200*time.Second {
+		t.Errorf("extended cred: expected ~7200s, got %v", rem)
+	}
+
+	// 2 cred còn lại: vẫn giữ TTL cũ ~60s
+	for _, c := range cr.Credentials {
+		if c.CredId == targetId {
+			continue
+		}
+		var other models.ProxyCredential
+		db.DB.First(&other, c.CredId)
+		if other.ExpiresAt == nil {
+			t.Fatal("other cred should have expires_at")
+		}
+		rem := time.Until(*other.ExpiresAt)
+		if rem > 120*time.Second {
+			t.Errorf("cred %d should still be ~60s, got %v (extend leaked?)", c.CredId, rem)
+		}
+	}
+}
+
+// TestExtend_WrongOwner — cred_ids của iuser khác → reject.
+func TestExtend_WrongOwner(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedConnectedSessions(t, 3)
+	testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", map[string]any{"iuser_id": "user-a", "count": 1, "ttl": 60}, rk.Tok)
+
+	// Lấy cred id của user-a
+	var aCred models.ProxyCredential
+	db.DB.Where("i_user_id = ?", "user-a").First(&aCred)
+
+	// user-b cố extend cred của user-a
+	extBody := map[string]any{
+		"iuser_id": "user-b",
+		"ttl":      7200,
+		"cred_ids": []uint{aCred.Id},
+	}
+	w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/extend", extBody, rk.Tok)
+	if w.Code != 400 {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestClaim_Concurrent(t *testing.T) {
 	rk := setupClaimRouter(t)
 	seedConnectedSessions(t, 20)

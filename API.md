@@ -718,25 +718,31 @@ Xóa creds của user.
 
 ### POST /api/v1/extend
 
-Gia hạn TTL cho active creds của user.
+Gia hạn TTL cho active creds của user. Hỗ trợ 3 scope:
+
+- **Tất cả creds của user**: chỉ truyền `iuser_id` + `ttl`
+- **Theo type**: thêm `type` (static/private/rotating) → chỉ gia hạn creds thuộc type đó
+- **Chỉ định cred_ids cụ thể**: thêm `cred_ids` (array) → chỉ gia hạn các cred này (cred phải thuộc iuser_id)
 
 **Body**:
 ```json
-{ "iuser_id": "user_abc", "ttl": 7200, "type": "rotating" }
+{ "iuser_id": "user_abc", "ttl": 7200, "cred_ids": [12, 15] }
 ```
 
 | Field | Type | Required | Note |
 |-------|------|----------|------|
-| iuser_id | string | ✓ | |
-| ttl | int | ✓ | giây, phải > 0 |
-| type | string | optional | nếu có → chỉ extend creds thuộc type này |
+| iuser_id | string | ✓ | chủ sở hữu creds |
+| ttl | int | ✓ | giây, phải > 0. Set `expires_at = now + ttl` (KHÔNG cộng dồn) |
+| type | string | optional | chỉ extend creds thuộc type này; bỏ qua nếu `cred_ids` được dùng |
+| cred_ids | []uint | optional | chỉ extend các cred này. Tất cả phải thuộc `iuser_id`. |
 
-**Success 200**: Cùng shape với `/claim` (creds sau gia hạn).
+**Success 200**: Cùng shape với `/claim` (creds sau gia hạn). Nếu dùng `cred_ids`, response chỉ chứa các cred được extend.
 
 **Errors**:
 - `400 "ttl phải > 0"`
 - `400 "type phải là static|private|rotating"`
-- `404 "không tìm thấy credentials active cho iuser_id này"`
+- `400 "một số cred_ids không tồn tại hoặc không thuộc iuser_id này"` (ownership fail)
+- `404 "không tìm thấy credentials active cho iuser_id này"` (chỉ khi không dùng `cred_ids`)
 
 ### GET /api/v1/claim/status
 

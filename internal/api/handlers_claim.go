@@ -421,7 +421,8 @@ func ternaryStr(cond bool, a, b string) string {
 type extendReq struct {
 	IUserId string `json:"iuser_id" binding:"required"`
 	Ttl     int    `json:"ttl" binding:"required"`
-	Type    string `json:"type"` // optional — chỉ extend creds thuộc type này
+	Type    string `json:"type"`     // optional — chỉ extend creds thuộc type này
+	CredIds []uint `json:"cred_ids"` // optional — chỉ extend các cred cụ thể (subset của iuser)
 }
 
 func ClaimStatus(c *gin.Context) {
@@ -562,25 +563,45 @@ func ExtendCredentials(c *gin.Context) {
 		return
 	}
 
-	creds := activeCredsForUserByType(req.IUserId, req.Type)
-	if len(creds) == 0 {
-		fail(c, 404, "không tìm thấy credentials active cho iuser_id này")
-		return
+	// Scope: nếu có cred_ids → chỉ extend các cred được liệt kê (sau khi
+	// kiểm tra ownership = iuser_id). Ngược lại → extend toàn bộ iuser (tùy
+	// chọn lọc theo type).
+	var targetCreds []models.ProxyCredential
+	if len(req.CredIds) > 0 {
+		db.DB.Where("id IN ? AND i_user_id = ?", req.CredIds, req.IUserId).Find(&targetCreds)
+		if len(targetCreds) != len(req.CredIds) {
+			fail(c, 400, "một số cred_ids không tồn tại hoặc không thuộc iuser_id này")
+			return
+		}
+	} else {
+		targetCreds = activeCredsForUserByType(req.IUserId, req.Type)
+		if len(targetCreds) == 0 {
+			fail(c, 404, "không tìm thấy credentials active cho iuser_id này")
+			return
+		}
 	}
 
 	exp := time.Now().Add(time.Duration(req.Ttl) * time.Second)
-	ids := make([]uint, 0, len(creds))
-	for _, cr := range creds {
+	ids := make([]uint, 0, len(targetCreds))
+	for _, cr := range targetCreds {
 		ids = append(ids, cr.Id)
 	}
 	db.DB.Model(&models.ProxyCredential{}).Where("id IN ?", ids).Update("expires_at", exp)
 
-	updated := activeCredsForUserByType(req.IUserId, req.Type)
+	// Trả về cred đã extend (refresh từ DB)
+	var updated []models.ProxyCredential
+	db.DB.Where("id IN ?", ids).Find(&updated)
+
+	scope := ternaryStr(req.Type == "", "tất cả", req.Type)
+	if len(req.CredIds) > 0 {
+		scope = fmt.Sprintf("%d cred chỉ định", len(req.CredIds))
+	}
 	activity.Info(activity.CategoryClaim, "extend",
-		fmt.Sprintf("Extend %d cred của iuser=%s thêm %ds (type=%s)",
-			len(updated), req.IUserId, req.Ttl, ternaryStr(req.Type == "", "tất cả", req.Type)),
+		fmt.Sprintf("Extend %d cred của iuser=%s thêm %ds (scope: %s)",
+			len(updated), req.IUserId, req.Ttl, scope),
 		activity.IUserId(req.IUserId), activity.ClientIP(c.ClientIP()),
 		activity.F("type", req.Type), activity.F("ttl_seconds", req.Ttl),
+		activity.F("cred_ids", req.CredIds),
 		activity.F("extended_count", len(updated)),
 		activity.F("new_expires_at", exp.Format(time.RFC3339)))
 	ok(c, gin.H{"iuser_id": req.IUserId, "type": req.Type, "credentials": buildCredResponses(updated)})
