@@ -632,9 +632,13 @@ Mỗi session có 1 trong 3 type. Type chỉ ảnh hưởng tới **giới hạn
 
 Claim N creds cho user. Mỗi cred được cấp trên 1 session khác nhau, type khớp với `type` request.
 
+**Idempotency**: Quan trọng cho luồng đặt hàng nhiều đơn cùng user.
+- **Có `order_id`**: scope theo `(iuser_id, order_id, type)`. Retry cùng `order_id` → trả creds cũ (retry-safe). Đơn khác (`order_id` mới) → cấp creds MỚI hoàn toàn, không reuse từ đơn cũ.
+- **Không `order_id`**: scope theo `(iuser_id, type)` — legacy. Cùng iuser claim lại cùng type → trả creds cũ.
+
 **Body**:
 ```json
-{ "iuser_id": "user_abc", "count": 5, "type": "rotating", "ttl": 3600 }
+{ "iuser_id": "user_abc", "count": 5, "type": "rotating", "ttl": 3600, "order_id": "ORD-12345" }
 ```
 
 | Field | Type | Required | Note |
@@ -643,11 +647,13 @@ Claim N creds cho user. Mỗi cred được cấp trên 1 session khác nhau, ty
 | count | int | ✓ | >= 1 |
 | type | string | optional | `static` \| `private` \| `rotating` (default `rotating`) |
 | ttl | int | optional | giây; 0/missing = vĩnh viễn |
+| order_id | string | optional | idempotency key cho 1 đơn. Khuyến nghị: main server gửi unique id mỗi đơn |
 
 **Success 200**:
 ```json
 {
   "iuser_id": "user_abc",
+  "order_id": "ORD-12345",
   "type": "rotating",
   "credentials": [
     {
@@ -655,6 +661,7 @@ Claim N creds cho user. Mỗi cred được cấp trên 1 session khác nhau, ty
       "proxy_id": 50,
       "session_id": 100,
       "type": "rotating",
+      "order_id": "ORD-12345",
       "ip": "14.224.245.142",
       "port": 30000,
       "username": "u1a2b",
@@ -668,7 +675,7 @@ Claim N creds cho user. Mỗi cred được cấp trên 1 session khác nhau, ty
 **Errors**:
 - `400 "count phải >= 1"`
 - `400 "type phải là static|private|rotating"`
-- `400 "không đủ sessions type=<X>: đã có Y creds, cần thêm Z, chỉ còn W slot"`
+- `400 "không đủ sessions type=<X>: đã có Y creds (order=Z), cần thêm N, chỉ còn M slot"`
 
 **Concurrency**: Mutex `claimMu` — serialize với `/change`.
 
@@ -691,12 +698,14 @@ Claim N creds cho user. Mỗi cred được cấp trên 1 session khác nhau, ty
 **Side effects**:
 - Preserve remaining TTL (cred mới có TTL còn lại = cred cũ).
 - Type được preserve tự động — không cần truyền.
+- **OrderId được preserve** — cred mới vẫn thuộc cùng đơn của cred cũ.
 
 ### GET /api/v1/user-creds
 
 **Query**:
 - `iuser_id` string, required
 - `type` string, optional (`static|private|rotating`) — filter theo type
+- `order_id` string, optional — chỉ trả creds thuộc đơn này
 
 **Success 200**: Cùng shape với `/claim`.
 
@@ -706,15 +715,18 @@ Xóa creds của user.
 
 **Body**:
 ```json
-{ "iuser_id": "user_abc", "type": "static" }
+{ "iuser_id": "user_abc", "type": "static", "order_id": "ORD-001" }
 ```
 
 | Field | Type | Required | Note |
 |-------|------|----------|------|
 | iuser_id | string | ✓ | |
-| type | string | optional | nếu có → chỉ release creds thuộc type này; nếu bỏ trống → release tất cả |
+| type | string | optional | nếu có → chỉ release creds thuộc type này |
+| order_id | string | optional | nếu có → chỉ release creds thuộc ĐƠN này (kết hợp được với `type`) |
 
-**Success 200**: `{ "iuser_id": "user_abc", "type": "static", "released": 3 }`
+Nếu cả 2 đều bỏ trống → release **TẤT CẢ** creds của user.
+
+**Success 200**: `{ "iuser_id": "user_abc", "type": "static", "order_id": "ORD-001", "released": 3 }`
 
 ### POST /api/v1/extend
 
@@ -728,22 +740,24 @@ new_expires_at = base + ttl_seconds
 - Cred đã quá hạn (current < now): tính lại từ `now` + ttl (không cộng dồn quá khứ âm)
 - Cred `expires_at = NULL` (vô thời hạn): SET TTL mới = `now + ttl` (giống claim mới)
 
-Hỗ trợ 3 scope:
-- **Tất cả creds của user**: `iuser_id` + `ttl`
-- **Theo type**: thêm `type` (static/private/rotating)
-- **Chỉ định cred_ids cụ thể**: thêm `cred_ids` (array)
+Hỗ trợ 4 scope (priority order):
+1. **`cred_ids`**: chỉ extend các cred được liệt kê (sau check ownership)
+2. **`order_id`**: extend toàn bộ creds của 1 đơn (có thể kết hợp với `type`)
+3. **Theo type**: extend creds thuộc type này
+4. **Tất cả creds của user**: chỉ `iuser_id` + `ttl`
 
 **Body**:
 ```json
-{ "iuser_id": "user_abc", "ttl": 7200, "cred_ids": [12, 15] }
+{ "iuser_id": "user_abc", "ttl": 7200, "order_id": "ORD-001" }
 ```
 
 | Field | Type | Required | Note |
 |-------|------|----------|------|
 | iuser_id | string | ✓ | chủ sở hữu creds |
 | ttl | int | ✓ | giây, phải > 0. **Cộng dồn** vào hạn hiện tại |
-| type | string | optional | chỉ extend creds thuộc type này; bỏ qua nếu `cred_ids` được dùng |
-| cred_ids | []uint | optional | chỉ extend các cred này. Tất cả phải thuộc `iuser_id`. |
+| type | string | optional | extend creds thuộc type này (bỏ qua nếu `cred_ids` được dùng) |
+| cred_ids | []uint | optional | extend đúng các cred này. Ưu tiên cao nhất. |
+| order_id | string | optional | extend creds thuộc đơn này. Bỏ qua nếu `cred_ids` được dùng. |
 
 **Success 200**: Cùng shape với `/claim`. Nếu dùng `cred_ids`, response chỉ chứa các cred được extend.
 

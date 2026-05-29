@@ -134,13 +134,17 @@ type Proxy struct {
 }
 
 type ProxyCredential struct {
-	Id        uint       `gorm:"primaryKey" json:"id"`
-	ProxyId   uint       `gorm:"index;not null" json:"proxy_id"`
-	Label     string     `gorm:"size:64" json:"label"`
-	Username  string     `gorm:"size:128;not null" json:"username"`
-	Password  string     `gorm:"size:256;not null" json:"password"`
-	Enabled   bool       `gorm:"default:true" json:"enabled"`
-	IUserId   string     `gorm:"size:128;index" json:"iuser_id,omitempty"`
+	Id      uint   `gorm:"primaryKey" json:"id"`
+	ProxyId uint   `gorm:"index;not null" json:"proxy_id"`
+	Label   string `gorm:"size:64" json:"label"`
+	Username string `gorm:"size:128;not null" json:"username"`
+	Password string `gorm:"size:256;not null" json:"password"`
+	Enabled  bool   `gorm:"default:true" json:"enabled"`
+	IUserId  string `gorm:"size:128;index" json:"iuser_id,omitempty"`
+	// OrderId — idempotency key cấp từ main server (1 order = 1 nhóm creds).
+	// Khi present, claim cùng (iuser_id, order_id, type) trả về cred cũ; khác
+	// order_id → cấp creds mới. Empty = legacy idempotent theo iuser_id only.
+	OrderId   string     `gorm:"size:64;index" json:"order_id,omitempty"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 }

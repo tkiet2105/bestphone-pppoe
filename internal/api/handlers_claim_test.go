@@ -156,6 +156,163 @@ func TestChange_Success(t *testing.T) {
 	}
 }
 
+// TestClaim_OrderId_DifferentOrdersGetFreshCreds — quan trọng cho luồng đặt hàng:
+// 2 đơn khác nhau của CÙNG iuser → mỗi đơn phải nhận creds riêng (không reuse).
+func TestClaim_OrderId_DifferentOrdersGetFreshCreds(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedConnectedSessions(t, 10)
+
+	// Đơn 1
+	body1 := map[string]any{"iuser_id": "user-x", "order_id": "ORDER-001", "count": 3, "ttl": 7200}
+	w1 := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", body1, rk.Tok)
+	if w1.Code != 200 {
+		t.Fatalf("order 1: %d %s", w1.Code, w1.Body.String())
+	}
+	var r1 claimResponse
+	json.Unmarshal(testutil.ParseResponse(t, w1).Data, &r1)
+	if len(r1.Credentials) != 3 {
+		t.Fatalf("order 1: expected 3 creds, got %d", len(r1.Credentials))
+	}
+
+	// Đơn 2 — cùng iuser, khác order_id → phải nhận creds MỚI
+	body2 := map[string]any{"iuser_id": "user-x", "order_id": "ORDER-002", "count": 3, "ttl": 7200}
+	w2 := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", body2, rk.Tok)
+	if w2.Code != 200 {
+		t.Fatalf("order 2: %d %s", w2.Code, w2.Body.String())
+	}
+	var r2 claimResponse
+	json.Unmarshal(testutil.ParseResponse(t, w2).Data, &r2)
+	if len(r2.Credentials) != 3 {
+		t.Fatalf("order 2: expected 3 creds, got %d", len(r2.Credentials))
+	}
+
+	// Cred IDs giữa 2 đơn phải hoàn toàn khác nhau
+	ids1 := map[uint]bool{}
+	for _, c := range r1.Credentials {
+		ids1[c.CredId] = true
+	}
+	for _, c := range r2.Credentials {
+		if ids1[c.CredId] {
+			t.Errorf("order 2 nhận cred #%d trùng với order 1", c.CredId)
+		}
+	}
+}
+
+// TestClaim_OrderId_Idempotent — cùng (iuser, order_id) gọi nhiều lần → trả creds cũ.
+func TestClaim_OrderId_Idempotent(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedConnectedSessions(t, 5)
+
+	body := map[string]any{"iuser_id": "user-y", "order_id": "ORDER-Y1", "count": 2, "ttl": 600}
+	w1 := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", body, rk.Tok)
+	var r1 claimResponse
+	json.Unmarshal(testutil.ParseResponse(t, w1).Data, &r1)
+
+	// Gọi lại lần 2 — phải trả cùng cred_ids
+	w2 := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", body, rk.Tok)
+	var r2 claimResponse
+	json.Unmarshal(testutil.ParseResponse(t, w2).Data, &r2)
+
+	if len(r2.Credentials) != len(r1.Credentials) {
+		t.Fatalf("count mismatch: %d vs %d", len(r1.Credentials), len(r2.Credentials))
+	}
+	ids1 := map[uint]bool{}
+	for _, c := range r1.Credentials {
+		ids1[c.CredId] = true
+	}
+	for _, c := range r2.Credentials {
+		if !ids1[c.CredId] {
+			t.Errorf("retry trả cred #%d không có trong lần đầu", c.CredId)
+		}
+	}
+}
+
+// TestClaim_OrderId_LegacyNoOrderId — claim không có order_id giữ legacy behavior:
+// idempotent theo (iuser, type), không match creds có order_id.
+func TestClaim_OrderId_LegacyNoOrderId(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedConnectedSessions(t, 8)
+
+	// User trước đã có 2 cred trên order ORDER-Z
+	bodyOrd := map[string]any{"iuser_id": "user-z", "order_id": "ORDER-Z", "count": 2, "ttl": 0}
+	testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", bodyOrd, rk.Tok)
+
+	// Claim không order_id → coi như order khác, phải cấp creds mới (không reuse order ORDER-Z)
+	bodyLegacy := map[string]any{"iuser_id": "user-z", "count": 2, "ttl": 0}
+	w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", bodyLegacy, rk.Tok)
+	if w.Code != 200 {
+		t.Fatalf("legacy: %d %s", w.Code, w.Body.String())
+	}
+	var rLeg claimResponse
+	json.Unmarshal(testutil.ParseResponse(t, w).Data, &rLeg)
+	if len(rLeg.Credentials) != 2 {
+		t.Fatalf("legacy expected 2 creds, got %d", len(rLeg.Credentials))
+	}
+	// Tất cả creds legacy phải có OrderId rỗng
+	for _, c := range rLeg.Credentials {
+		if c.OrderId != "" {
+			t.Errorf("legacy cred #%d có OrderId=%q, should be empty", c.CredId, c.OrderId)
+		}
+	}
+}
+
+// TestChange_PreservesOrderId — đổi cred → cred mới phải giữ order_id cũ.
+func TestChange_PreservesOrderId(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedConnectedSessions(t, 5)
+
+	body := map[string]any{"iuser_id": "user-chgord", "order_id": "ORDER-CHG", "count": 1, "ttl": 600}
+	w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", body, rk.Tok)
+	var r claimResponse
+	json.Unmarshal(testutil.ParseResponse(t, w).Data, &r)
+	credId := r.Credentials[0].CredId
+
+	chg := map[string]any{"iuser_id": "user-chgord", "cred_ids": []uint{credId}}
+	w2 := testutil.DoJSON(t, rk.R, "POST", "/api/v1/change", chg, rk.Tok)
+	var r2 claimResponse
+	json.Unmarshal(testutil.ParseResponse(t, w2).Data, &r2)
+	if len(r2.Credentials) != 1 {
+		t.Fatalf("change: expected 1, got %d", len(r2.Credentials))
+	}
+	if r2.Credentials[0].OrderId != "ORDER-CHG" {
+		t.Errorf("new cred OrderId=%q, expected ORDER-CHG", r2.Credentials[0].OrderId)
+	}
+}
+
+// TestRelease_ByOrderId — release theo order_id chỉ xóa creds của đơn đó.
+func TestRelease_ByOrderId(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedConnectedSessions(t, 10)
+
+	// User có 2 đơn
+	testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", map[string]any{
+		"iuser_id": "user-rel-ord", "order_id": "ORDER-A", "count": 2,
+	}, rk.Tok)
+	testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", map[string]any{
+		"iuser_id": "user-rel-ord", "order_id": "ORDER-B", "count": 3,
+	}, rk.Tok)
+
+	// Release chỉ ORDER-A
+	w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/release", map[string]any{
+		"iuser_id": "user-rel-ord", "order_id": "ORDER-A",
+	}, rk.Tok)
+	if w.Code != 200 {
+		t.Fatalf("release: %d %s", w.Code, w.Body.String())
+	}
+
+	// Còn lại 3 creds của ORDER-B
+	var remaining int64
+	db.DB.Model(&models.ProxyCredential{}).Where("i_user_id = ?", "user-rel-ord").Count(&remaining)
+	if remaining != 3 {
+		t.Errorf("expected 3 remaining (ORDER-B intact), got %d", remaining)
+	}
+	var orderACount int64
+	db.DB.Model(&models.ProxyCredential{}).Where("i_user_id = ? AND order_id = ?", "user-rel-ord", "ORDER-A").Count(&orderACount)
+	if orderACount != 0 {
+		t.Errorf("ORDER-A should be 0 after release, got %d", orderACount)
+	}
+}
+
 // TestClaim_Private_IgnoresDefaultSeed — regression cho bug: private session (max=1)
 // luôn có 1 default seed cred (iuser_id="") → trước v1.8.7, slot count = 1 → mọi
 // claim đều fail "không đủ" dù chưa có iuser nào claim. Sau fix: default cred

@@ -21,6 +21,7 @@ type credResponse struct {
 	ProxyId   uint       `json:"proxy_id"`
 	SessionId uint       `json:"session_id"`
 	Type      string     `json:"type"`
+	OrderId   string     `json:"order_id,omitempty"`
 	IP        string     `json:"ip"`
 	Port      int        `json:"port"`
 	Username  string     `json:"username"`
@@ -33,6 +34,16 @@ func activeCredsForUser(iuserid string) []models.ProxyCredential {
 	now := time.Now()
 	db.DB.Where("i_user_id = ? AND enabled = ? AND (expires_at IS NULL OR expires_at > ?)",
 		iuserid, true, now).Find(&creds)
+	return creds
+}
+
+// activeCredsForOrder — scope theo (iuser_id, order_id). Dùng cho idempotency
+// per-order: 2 đơn hàng khác nhau của cùng user → 2 nhóm creds riêng biệt.
+func activeCredsForOrder(iuserid, orderId string) []models.ProxyCredential {
+	var creds []models.ProxyCredential
+	now := time.Now()
+	db.DB.Where("i_user_id = ? AND order_id = ? AND enabled = ? AND (expires_at IS NULL OR expires_at > ?)",
+		iuserid, orderId, true, now).Find(&creds)
 	return creds
 }
 
@@ -84,6 +95,7 @@ func buildCredResponses(creds []models.ProxyCredential) []credResponse {
 			ProxyId:   p.Id,
 			SessionId: s.Id,
 			Type:      s.Type,
+			OrderId:   cr.OrderId,
 			IP:        ip,
 			Port:      p.Port,
 			Username:  cr.Username,
@@ -158,6 +170,14 @@ type claimReq struct {
 	Count   int    `json:"count" binding:"required"`
 	Type    string `json:"type"` // static | private | rotating (default rotating)
 	Ttl     int    `json:"ttl"`
+	// OrderId — idempotency key cho ĐƠN HÀNG cụ thể. Khi present:
+	//   * Cùng (iuser_id, order_id, type) → trả lại creds đã cấp (retry-safe)
+	//   * Khác order_id → cấp creds MỚI hoàn toàn (không reuse từ order khác)
+	// Khi absent: idempotency theo (iuser_id, type) — legacy behavior.
+	//
+	// Khuyến nghị: main server gửi order_id duy nhất cho mỗi đơn để mỗi đơn
+	// được cấp set creds riêng biệt (tránh 2 đơn cùng user trùng proxy).
+	OrderId string `json:"order_id"`
 }
 
 func ClaimCredentials(c *gin.Context) {
@@ -182,36 +202,61 @@ func ClaimCredentials(c *gin.Context) {
 	claimMu.Lock()
 	defer claimMu.Unlock()
 
+	// Scope idempotency: nếu có order_id → match theo (iuser, order_id, type);
+	// nếu không → legacy (iuser, type).
 	existingAll := activeCredsForUser(req.IUserId)
 	existing := make([]models.ProxyCredential, 0, len(existingAll))
 	for _, cr := range existingAll {
-		if credSessionType(cr.ProxyId) == sessType {
-			existing = append(existing, cr)
+		if credSessionType(cr.ProxyId) != sessType {
+			continue
 		}
+		if req.OrderId != "" && cr.OrderId != req.OrderId {
+			continue // creds của order khác → không reuse
+		}
+		if req.OrderId == "" && cr.OrderId != "" {
+			continue // legacy claim không match creds có order
+		}
+		existing = append(existing, cr)
 	}
 
 	if len(existing) >= req.Count {
-		ok(c, gin.H{"iuser_id": req.IUserId, "type": sessType, "credentials": buildCredResponses(existing[:req.Count])})
+		ok(c, gin.H{
+			"iuser_id":    req.IUserId,
+			"order_id":    req.OrderId,
+			"type":        sessType,
+			"credentials": buildCredResponses(existing[:req.Count]),
+		})
 		return
 	}
 
 	need := req.Count - len(existing)
-	// Exclude proxies user đã có cred (mọi type) để không trùng session per-user.
-	usedProxyIds := make([]uint, 0, len(existingAll))
-	for _, cr := range existingAll {
+	// Exclude proxies user đã có cred TRONG CÙNG ORDER (hoặc tất cả nếu legacy).
+	// Mục đích: tránh 2 cred cùng order trên cùng session — nhưng 2 ORDER khác
+	// nhau của cùng user thì CHO PHÉP chia sẻ session (vì khách đặt 2 đơn riêng
+	// biệt, mỗi đơn có thể ngẫu nhiên rơi vào cùng session — không phải lỗi).
+	usedProxyIds := make([]uint, 0, len(existing))
+	for _, cr := range existing {
 		usedProxyIds = append(usedProxyIds, cr.ProxyId)
+	}
+	// Nếu không có order_id (legacy) → giữ behavior cũ: exclude tất cả proxies
+	// user đã có cred (mọi type, mọi order).
+	if req.OrderId == "" {
+		usedProxyIds = usedProxyIds[:0]
+		for _, cr := range existingAll {
+			usedProxyIds = append(usedProxyIds, cr.ProxyId)
+		}
 	}
 
 	proxies := availableProxiesForType(usedProxyIds, need, sessType)
 	if len(proxies) < need {
 		activity.Warn(activity.CategoryClaim, "insufficient_slots",
-			fmt.Sprintf("Claim type=%s cho iuser=%s thiếu slot: cần thêm %d, còn %d",
-				sessType, req.IUserId, need, len(proxies)),
+			fmt.Sprintf("Claim type=%s cho iuser=%s (order=%s) thiếu slot: cần thêm %d, còn %d",
+				sessType, req.IUserId, req.OrderId, need, len(proxies)),
 			activity.IUserId(req.IUserId), activity.ClientIP(c.ClientIP()),
-			activity.F("type", sessType), activity.F("need", need),
-			activity.F("available", len(proxies)))
-		fail(c, 400, fmt.Sprintf("không đủ sessions type=%s: đã có %d creds, cần thêm %d, chỉ còn %d slot",
-			sessType, len(existing), need, len(proxies)))
+			activity.F("type", sessType), activity.F("order_id", req.OrderId),
+			activity.F("need", need), activity.F("available", len(proxies)))
+		fail(c, 400, fmt.Sprintf("không đủ sessions type=%s: đã có %d creds (order=%s), cần thêm %d, chỉ còn %d slot",
+			sessType, len(existing), req.OrderId, need, len(proxies)))
 		return
 	}
 
@@ -230,6 +275,7 @@ func ClaimCredentials(c *gin.Context) {
 			Password:  claimRandHex(8),
 			Enabled:   true,
 			IUserId:   req.IUserId,
+			OrderId:   req.OrderId,
 			ExpiresAt: expPtr,
 		}
 		if err := db.DB.Create(&cr).Error; err != nil {
@@ -242,12 +288,18 @@ func ClaimCredentials(c *gin.Context) {
 
 	all := append(existing, newCreds...)
 	activity.Info(activity.CategoryClaim, "ok",
-		fmt.Sprintf("Claim thành công: iuser=%s, type=%s, cấp %d cred mới (tổng %d)",
-			req.IUserId, sessType, len(newCreds), len(all)),
+		fmt.Sprintf("Claim thành công: iuser=%s, order=%s, type=%s, cấp %d cred mới (tổng %d)",
+			req.IUserId, req.OrderId, sessType, len(newCreds), len(all)),
 		activity.IUserId(req.IUserId), activity.ClientIP(c.ClientIP()),
-		activity.F("type", sessType), activity.F("new_count", len(newCreds)),
+		activity.F("type", sessType), activity.F("order_id", req.OrderId),
+		activity.F("new_count", len(newCreds)),
 		activity.F("total_count", len(all)))
-	ok(c, gin.H{"iuser_id": req.IUserId, "type": sessType, "credentials": buildCredResponses(all)})
+	ok(c, gin.H{
+		"iuser_id":    req.IUserId,
+		"order_id":    req.OrderId,
+		"type":        sessType,
+		"credentials": buildCredResponses(all),
+	})
 }
 
 type changeReq struct {
@@ -315,6 +367,7 @@ func ChangeCredentials(c *gin.Context) {
 			Password:  claimRandHex(8),
 			Enabled:   true,
 			IUserId:   req.IUserId,
+			OrderId:   old.OrderId, // preserve order_id để cred mới vẫn thuộc cùng đơn
 			ExpiresAt: expPtr,
 		}
 		if err := db.DB.Create(&cr).Error; err != nil {
@@ -350,13 +403,24 @@ func ListUserCreds(c *gin.Context) {
 		fail(c, 400, "type phải là static|private|rotating")
 		return
 	}
+	orderId := c.Query("order_id") // optional filter — chỉ trả creds thuộc đơn này
 	creds := activeCredsForUserByType(iuserid, sessType)
-	ok(c, gin.H{"iuser_id": iuserid, "type": sessType, "credentials": buildCredResponses(creds)})
+	if orderId != "" {
+		filtered := make([]models.ProxyCredential, 0, len(creds))
+		for _, cr := range creds {
+			if cr.OrderId == orderId {
+				filtered = append(filtered, cr)
+			}
+		}
+		creds = filtered
+	}
+	ok(c, gin.H{"iuser_id": iuserid, "type": sessType, "order_id": orderId, "credentials": buildCredResponses(creds)})
 }
 
 type releaseReq struct {
 	IUserId string `json:"iuser_id" binding:"required"`
-	Type    string `json:"type"` // optional — chỉ release creds thuộc type này
+	Type    string `json:"type"`     // optional — chỉ release creds thuộc type này
+	OrderId string `json:"order_id"` // optional — chỉ release creds thuộc đơn này
 }
 
 func ReleaseCredentials(c *gin.Context) {
@@ -370,10 +434,14 @@ func ReleaseCredentials(c *gin.Context) {
 		return
 	}
 
+	q := db.DB.Where("i_user_id = ?", req.IUserId)
+	if req.OrderId != "" {
+		q = q.Where("order_id = ?", req.OrderId)
+	}
 	var creds []models.ProxyCredential
-	db.DB.Where("i_user_id = ?", req.IUserId).Find(&creds)
+	q.Find(&creds)
 
-	// Nếu có type filter → chỉ giữ những cred thuộc type đó.
+	// Nếu có type filter → chỉ giữ những cred thuộc type đó (SQL không join được dễ).
 	if req.Type != "" {
 		filtered := make([]models.ProxyCredential, 0, len(creds))
 		for _, cr := range creds {
@@ -403,12 +471,17 @@ func ReleaseCredentials(c *gin.Context) {
 
 	if released > 0 {
 		activity.Info(activity.CategoryClaim, "release",
-			fmt.Sprintf("Release %d cred của iuser=%s (type=%s)", released, req.IUserId,
-				ternaryStr(req.Type == "", "tất cả", req.Type)),
+			fmt.Sprintf("Release %d cred của iuser=%s (type=%s, order=%s)", released, req.IUserId,
+				ternaryStr(req.Type == "", "tất cả", req.Type),
+				ternaryStr(req.OrderId == "", "tất cả", req.OrderId)),
 			activity.IUserId(req.IUserId), activity.ClientIP(c.ClientIP()),
-			activity.F("type", req.Type), activity.F("released", released))
+			activity.F("type", req.Type), activity.F("order_id", req.OrderId),
+			activity.F("released", released))
 	}
-	ok(c, gin.H{"iuser_id": req.IUserId, "type": req.Type, "released": released})
+	ok(c, gin.H{
+		"iuser_id": req.IUserId, "type": req.Type, "order_id": req.OrderId,
+		"released": released,
+	})
 }
 
 func ternaryStr(cond bool, a, b string) string {
@@ -423,6 +496,7 @@ type extendReq struct {
 	Ttl     int    `json:"ttl" binding:"required"`
 	Type    string `json:"type"`     // optional — chỉ extend creds thuộc type này
 	CredIds []uint `json:"cred_ids"` // optional — chỉ extend các cred cụ thể (subset của iuser)
+	OrderId string `json:"order_id"` // optional — chỉ extend creds thuộc đơn này
 }
 
 func ClaimStatus(c *gin.Context) {
@@ -563,14 +637,31 @@ func ExtendCredentials(c *gin.Context) {
 		return
 	}
 
-	// Scope: nếu có cred_ids → chỉ extend các cred được liệt kê (sau khi
-	// kiểm tra ownership = iuser_id). Ngược lại → extend toàn bộ iuser (tùy
-	// chọn lọc theo type).
+	// Scope (priority order):
+	//   1. cred_ids → extend đúng các cred này (check ownership)
+	//   2. order_id → extend creds của đơn cụ thể (optional thêm type filter)
+	//   3. iuser_id (+ optional type) → extend tất cả creds active của user
 	var targetCreds []models.ProxyCredential
 	if len(req.CredIds) > 0 {
 		db.DB.Where("id IN ? AND i_user_id = ?", req.CredIds, req.IUserId).Find(&targetCreds)
 		if len(targetCreds) != len(req.CredIds) {
 			fail(c, 400, "một số cred_ids không tồn tại hoặc không thuộc iuser_id này")
+			return
+		}
+	} else if req.OrderId != "" {
+		targetCreds = activeCredsForOrder(req.IUserId, req.OrderId)
+		// optional type filter trên kết quả order
+		if req.Type != "" {
+			filtered := make([]models.ProxyCredential, 0, len(targetCreds))
+			for _, cr := range targetCreds {
+				if credSessionType(cr.ProxyId) == req.Type {
+					filtered = append(filtered, cr)
+				}
+			}
+			targetCreds = filtered
+		}
+		if len(targetCreds) == 0 {
+			fail(c, 404, "không tìm thấy creds active cho iuser_id + order_id này")
 			return
 		}
 	} else {
@@ -609,17 +700,21 @@ func ExtendCredentials(c *gin.Context) {
 	scope := ternaryStr(req.Type == "", "tất cả", req.Type)
 	if len(req.CredIds) > 0 {
 		scope = fmt.Sprintf("%d cred chỉ định", len(req.CredIds))
+	} else if req.OrderId != "" {
+		scope = "order=" + req.OrderId
 	}
 	activity.Info(activity.CategoryClaim, "extend",
 		fmt.Sprintf("Cộng dồn %ds cho %d cred của iuser=%s (scope: %s)",
 			req.Ttl, len(updated), req.IUserId, scope),
 		activity.IUserId(req.IUserId), activity.ClientIP(c.ClientIP()),
-		activity.F("type", req.Type), activity.F("ttl_seconds_added", req.Ttl),
+		activity.F("type", req.Type), activity.F("order_id", req.OrderId),
+		activity.F("ttl_seconds_added", req.Ttl),
 		activity.F("cred_ids", req.CredIds),
 		activity.F("extended_count", len(updated)))
 	ok(c, gin.H{
 		"iuser_id":    req.IUserId,
 		"type":        req.Type,
+		"order_id":    req.OrderId,
 		"credentials": buildCredResponses(updated),
 	})
 }
