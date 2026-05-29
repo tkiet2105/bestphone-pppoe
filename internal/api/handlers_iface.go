@@ -29,10 +29,19 @@ type ifaceInfo struct {
 }
 
 func isPhysical(name string) bool {
+	// Loại bỏ prefix virtual quen thuộc (kernel/docker/openvpn/wireguard)
 	for _, prefix := range []string{"ppp", "mvbp", "mv-", "docker", "veth", "br-", "tun", "tap", "wg", "virbr"} {
 		if strings.HasPrefix(name, prefix) {
 			return false
 		}
+	}
+	// Quy tắc cứng: NIC physical phải có /sys/class/net/<name>/device (PCI
+	// device backing). VLAN, macvlan, bridge derivatives nằm trong
+	// /sys/devices/virtual/net/, không có /device subdir → loại bỏ.
+	// Nhờ đó các iface kiểu enp2s0_root, enp2s0_L_1, enp2s0_v201, enp2s0L1
+	// được lọc, picker chỉ còn các NIC PCI thật sự.
+	if _, err := os.Stat("/sys/class/net/" + name + "/device"); err != nil {
+		return false
 	}
 	return true
 }

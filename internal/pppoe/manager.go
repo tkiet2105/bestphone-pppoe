@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -451,6 +452,11 @@ func isPhysicalNIC(name string) bool {
 		if strings.HasPrefix(name, prefix) {
 			return false
 		}
+	}
+	// Sysfs check: NIC physical phải có /sys/class/net/<name>/device (PCI).
+	// Loại bỏ VLAN, macvlan, bridge derivatives (đều ở /sys/devices/virtual/net/).
+	if _, err := os.Stat("/sys/class/net/" + name + "/device"); err != nil {
+		return false
 	}
 	return true
 }
