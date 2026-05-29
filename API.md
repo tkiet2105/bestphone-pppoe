@@ -720,12 +720,13 @@ Xóa creds của user.
 
 **Cộng dồn** TTL cho active creds của user. Công thức:
 ```
-new_expires_at = max(now, current_expires_at) + ttl_seconds
+base = (current_expires_at > now ? current_expires_at : now)   # NULL cũng coi như now
+new_expires_at = base + ttl_seconds
 ```
 
 - Cred còn hạn (current > now): cộng thêm ttl vào hạn hiện tại
 - Cred đã quá hạn (current < now): tính lại từ `now` + ttl (không cộng dồn quá khứ âm)
-- Cred `expires_at = NULL` (vô thời hạn): **BỎ QUA** (extend vô tận = vô nghĩa) → trả về trong field `skipped_no_ttl`
+- Cred `expires_at = NULL` (vô thời hạn): SET TTL mới = `now + ttl` (giống claim mới)
 
 Hỗ trợ 3 scope:
 - **Tất cả creds của user**: `iuser_id` + `ttl`
@@ -744,15 +745,7 @@ Hỗ trợ 3 scope:
 | type | string | optional | chỉ extend creds thuộc type này; bỏ qua nếu `cred_ids` được dùng |
 | cred_ids | []uint | optional | chỉ extend các cred này. Tất cả phải thuộc `iuser_id`. |
 
-**Success 200**:
-```json
-{
-  "iuser_id": "user_abc",
-  "type": "",
-  "credentials": [ ... ],
-  "skipped_no_ttl": 0
-}
-```
+**Success 200**: Cùng shape với `/claim`. Nếu dùng `cred_ids`, response chỉ chứa các cred được extend.
 
 **Errors**:
 - `400 "ttl phải > 0"`

@@ -582,21 +582,18 @@ func ExtendCredentials(c *gin.Context) {
 	}
 
 	// Cộng dồn: new_expires_at = max(now, current_expires_at) + ttl giây.
-	// max(now, current) xử lý cred đã quá hạn (negative remaining) → start lại từ now.
-	// Cred có expires_at = NULL (never expires) được GIỮ NGUYÊN (gia hạn vô tận
-	// = vô nghĩa).
+	// - Cred còn hạn → cộng vào hạn hiện tại
+	// - Cred quá hạn → tính lại từ now (không cộng quá khứ âm)
+	// - Cred NULL (vô thời hạn) → set mới = now + ttl (như claim mới)
 	now := time.Now()
 	add := time.Duration(req.Ttl) * time.Second
 	ids := make([]uint, 0, len(targetCreds))
-	skipped := 0
 	for _, cr := range targetCreds {
-		if cr.ExpiresAt == nil {
-			skipped++
-			continue
-		}
-		base := *cr.ExpiresAt
-		if base.Before(now) {
+		var base time.Time
+		if cr.ExpiresAt == nil || cr.ExpiresAt.Before(now) {
 			base = now
+		} else {
+			base = *cr.ExpiresAt
 		}
 		newExp := base.Add(add)
 		db.DB.Model(&models.ProxyCredential{}).Where("id = ?", cr.Id).Update("expires_at", newExp)
@@ -613,22 +610,16 @@ func ExtendCredentials(c *gin.Context) {
 	if len(req.CredIds) > 0 {
 		scope = fmt.Sprintf("%d cred chỉ định", len(req.CredIds))
 	}
-	summary := fmt.Sprintf("Cộng dồn %ds cho %d cred của iuser=%s (scope: %s)",
-		req.Ttl, len(updated), req.IUserId, scope)
-	if skipped > 0 {
-		summary += fmt.Sprintf(", bỏ qua %d cred không có TTL", skipped)
-	}
 	activity.Info(activity.CategoryClaim, "extend",
-		summary,
+		fmt.Sprintf("Cộng dồn %ds cho %d cred của iuser=%s (scope: %s)",
+			req.Ttl, len(updated), req.IUserId, scope),
 		activity.IUserId(req.IUserId), activity.ClientIP(c.ClientIP()),
 		activity.F("type", req.Type), activity.F("ttl_seconds_added", req.Ttl),
 		activity.F("cred_ids", req.CredIds),
-		activity.F("extended_count", len(updated)),
-		activity.F("skipped_no_ttl", skipped))
+		activity.F("extended_count", len(updated)))
 	ok(c, gin.H{
-		"iuser_id":       req.IUserId,
-		"type":           req.Type,
-		"credentials":    buildCredResponses(updated),
-		"skipped_no_ttl": skipped,
+		"iuser_id":    req.IUserId,
+		"type":        req.Type,
+		"credentials": buildCredResponses(updated),
 	})
 }

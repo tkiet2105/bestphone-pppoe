@@ -422,9 +422,9 @@ func TestExtend_CumulativeMultipleCalls(t *testing.T) {
 	}
 }
 
-// TestExtend_NullTTLSkipped — cred không có TTL (never expires) không bị extend,
-// giữ nguyên NULL.
-func TestExtend_NullTTLSkipped(t *testing.T) {
+// TestExtend_NullTTLGetsSet — cred vô thời hạn (NULL) → extend SET TTL mới = now+ttl
+// (giống như claim mới với ttl).
+func TestExtend_NullTTLGetsSet(t *testing.T) {
 	rk := setupClaimRouter(t)
 	seedConnectedSessions(t, 3)
 
@@ -435,17 +435,15 @@ func TestExtend_NullTTLSkipped(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
-	resp := testutil.ParseResponse(t, w)
-	var body map[string]any
-	json.Unmarshal(resp.Data, &body)
-	if skipped, ok := body["skipped_no_ttl"].(float64); !ok || skipped != 1 {
-		t.Errorf("expected skipped_no_ttl=1, got %v", body["skipped_no_ttl"])
-	}
 
 	var c models.ProxyCredential
 	db.DB.Where("i_user_id = ?", "user-null").First(&c)
-	if c.ExpiresAt != nil {
-		t.Errorf("NULL TTL cred should stay NULL, got %v", c.ExpiresAt)
+	if c.ExpiresAt == nil {
+		t.Fatal("NULL TTL cred should be SET sau extend")
+	}
+	rem := time.Until(*c.ExpiresAt)
+	if rem < 3590*time.Second || rem > 3610*time.Second {
+		t.Errorf("expected ~3600s, got %v", rem)
 	}
 }
 
