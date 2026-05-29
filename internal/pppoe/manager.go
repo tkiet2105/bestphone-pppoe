@@ -115,9 +115,19 @@ func (m *Manager) Dial(sessionID uint) error {
 		return fmt.Errorf("iface %s did not come UP", ifaceName)
 	}
 
+	wanIP := IfaceIPv4(ifaceName)
+	if IsBlockedISPIp(wanIP) {
+		// ISP cấp IP CGNAT/private → proxy không có IP công cộng riêng.
+		// Hangup + đánh dấu error để watchdog redial (có thể lần sau BRAS cho IP khác).
+		m.hangupPeer(peerName)
+		errMsg := fmt.Sprintf("ISP cấp IP CGNAT/private (%s) - không dùng được", wanIP)
+		m.setStatus(&sess, models.StatusError, errMsg)
+		return fmt.Errorf("%s", errMsg)
+	}
+
 	now := time.Now()
 	sess.Iface = ifaceName
-	sess.IP = IfaceIPv4(ifaceName)
+	sess.IP = wanIP
 	sess.Status = models.StatusConnected
 	sess.LastError = ""
 	sess.ConnectedAt = &now
@@ -277,6 +287,20 @@ func (m *Manager) reconcileOnce() {
 	var sessions []models.Session
 	m.db.Where("status = ?", models.StatusConnected).Find(&sessions)
 	for _, s := range sessions {
+		// 1) Demote session "connected" nhưng dùng IP CGNAT/private — không có ích cho proxy
+		if IsBlockedISPIp(s.IP) {
+			log.Printf("[watchdog] session %d IP %s nằm trong dải bị chặn — demote", s.Id, s.IP)
+			m.hangupPeer(fmt.Sprintf("bp-sess-%d", s.Id))
+			errMsg := fmt.Sprintf("ISP cấp IP CGNAT/private (%s) - không dùng được", s.IP)
+			m.db.Model(&models.Session{}).Where("id = ?", s.Id).Updates(map[string]any{
+				"status":     models.StatusError,
+				"last_error": errMsg,
+			})
+			m.publish("session.status", map[string]any{
+				"session_id": s.Id, "status": models.StatusError, "error": errMsg,
+			})
+			continue
+		}
 		if s.Iface == "" {
 			continue
 		}
