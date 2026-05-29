@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	mathrand "math/rand"
 	"sync"
 	"time"
 
@@ -95,6 +96,12 @@ func buildCredResponses(creds []models.ProxyCredential) []credResponse {
 
 // availableProxiesForType — proxies running, session connected, type khớp, còn slot
 // theo MaxCredsForType(session.type) và không nằm trong excludeProxyIds.
+//
+// Shuffle candidates trước khi filter slot để:
+//   - Change cred KHÔNG ping-pong A↔B↔A (trước: order by id asc → đổi cred A
+//     → exclude A → cấp B → đổi B → exclude B → cấp A. Lặp vô tận giữa 2-3 proxy)
+//   - Claim đồng thời nhiều user thì proxy được phân bố đều, không dồn user
+//     đầu vào cùng nhóm proxy id thấp
 func availableProxiesForType(excludeProxyIds []uint, count int, sessType string) []models.Proxy {
 	var candidates []models.Proxy
 	q := db.DB.Joins("JOIN sessions ON sessions.id = proxies.session_id").
@@ -106,6 +113,11 @@ func availableProxiesForType(excludeProxyIds []uint, count int, sessType string)
 		q = q.Where("proxies.id NOT IN ?", excludeProxyIds)
 	}
 	q.Find(&candidates)
+
+	// Shuffle in-place (Fisher-Yates) — math/rand tự seed từ Go 1.20+
+	mathrand.Shuffle(len(candidates), func(i, j int) {
+		candidates[i], candidates[j] = candidates[j], candidates[i]
+	})
 
 	out := make([]models.Proxy, 0, count)
 	now := time.Now()

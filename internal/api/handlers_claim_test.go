@@ -156,6 +156,44 @@ func TestChange_Success(t *testing.T) {
 	}
 }
 
+// TestChange_NotPingPong — regression cho bug: change cred A → cấp B → change B → cấp A
+// → lặp vô tận giữa 2 proxy. Sau fix shuffle, qua 10 lần change phải đi qua ít nhất 3
+// session khác nhau (random rải đều trong pool 5 session).
+func TestChange_NotPingPong(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedConnectedSessions(t, 5)
+
+	claimBody := map[string]any{"iuser_id": "user-pp", "count": 1, "ttl": 0}
+	w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", claimBody, rk.Tok)
+	resp := testutil.ParseResponse(t, w)
+	var cr claimResponse
+	json.Unmarshal(resp.Data, &cr)
+	currentCred := cr.Credentials[0].CredId
+	seenSessions := map[uint]bool{cr.Credentials[0].SessionId: true}
+
+	for i := 0; i < 10; i++ {
+		changeBody := map[string]any{
+			"iuser_id": "user-pp",
+			"cred_ids": []uint{currentCred},
+		}
+		w2 := testutil.DoJSON(t, rk.R, "POST", "/api/v1/change", changeBody, rk.Tok)
+		if w2.Code != 200 {
+			t.Fatalf("change %d: status %d: %s", i, w2.Code, w2.Body.String())
+		}
+		resp2 := testutil.ParseResponse(t, w2)
+		var cr2 claimResponse
+		json.Unmarshal(resp2.Data, &cr2)
+		if len(cr2.Credentials) != 1 {
+			t.Fatalf("change %d: expected 1 cred, got %d", i, len(cr2.Credentials))
+		}
+		currentCred = cr2.Credentials[0].CredId
+		seenSessions[cr2.Credentials[0].SessionId] = true
+	}
+	if len(seenSessions) < 3 {
+		t.Errorf("ping-pong detected: 11 change calls chỉ qua %d session (kỳ vọng >=3 trong pool 5)", len(seenSessions))
+	}
+}
+
 func TestChange_WrongOwner(t *testing.T) {
 	rk := setupClaimRouter(t)
 	seedConnectedSessions(t, 5)
