@@ -14,8 +14,13 @@ import (
 	proxysrv "github.com/tkiet2105/bestphone-pppoe/internal/proxy/server"
 )
 
-// checkCredLimit — đảm bảo không vượt max creds (active) theo session.Type.
-// activeCount = creds enabled chưa hết hạn. addN = số creds sắp tạo thêm.
+// checkCredLimit — đảm bảo không vượt max iuser-claim slots theo session.Type.
+// addN = số creds sắp tạo thêm. Áp dụng cho cả admin manual create + bulk +
+// claim flow để có cùng định nghĩa "max" (số iuser slot).
+//
+// Không count default/seed creds (i_user_id = '') — chúng là infrastructure
+// (auth bootstrap), không tính vào slot quota. Nhờ vậy private session
+// (max=1) vẫn cho phép 1 claim dù đã có 1 default cred.
 func checkCredLimit(proxyId uint, addN int) error {
 	var p models.Proxy
 	if err := db.DB.First(&p, proxyId).Error; err != nil {
@@ -29,10 +34,10 @@ func checkCredLimit(proxyId uint, addN int) error {
 	var cur int64
 	now := time.Now()
 	db.DB.Model(&models.ProxyCredential{}).
-		Where("proxy_id = ? AND enabled = ? AND (expires_at IS NULL OR expires_at > ?)", proxyId, true, now).
+		Where("proxy_id = ? AND enabled = ? AND i_user_id != '' AND (expires_at IS NULL OR expires_at > ?)", proxyId, true, now).
 		Count(&cur)
 	if int(cur)+addN > max {
-		return fmt.Errorf("vượt giới hạn creds: session type=%s tối đa %d, đang có %d, thêm %d", s.Type, max, cur, addN)
+		return fmt.Errorf("vượt giới hạn iuser slots: session type=%s tối đa %d, đang có %d (claimed), thêm %d", s.Type, max, cur, addN)
 	}
 	return nil
 }

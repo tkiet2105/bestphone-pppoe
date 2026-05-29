@@ -156,6 +156,56 @@ func TestChange_Success(t *testing.T) {
 	}
 }
 
+// TestClaim_Private_IgnoresDefaultSeed — regression cho bug: private session (max=1)
+// luôn có 1 default seed cred (iuser_id="") → trước v1.8.7, slot count = 1 → mọi
+// claim đều fail "không đủ" dù chưa có iuser nào claim. Sau fix: default cred
+// không count vào slot quota.
+func TestClaim_Private_IgnoresDefaultSeed(t *testing.T) {
+	rk := setupClaimRouter(t)
+	line := testutil.SeedLine(t)
+	// 3 private sessions, mỗi session 1 default seed cred (iuser_id="")
+	for i := 0; i < 3; i++ {
+		sess := models.Session{
+			LineId: line.Id, PppUnit: 900 + i, Username: "u", Password: "p",
+			Type: models.SessionTypePrivate, Status: models.StatusConnected,
+		}
+		db.DB.Create(&sess)
+		p := models.Proxy{SessionId: sess.Id, Port: 58900 + i, Status: "running"}
+		db.DB.Create(&p)
+		db.DB.Create(&models.ProxyCredential{
+			ProxyId: p.Id, Label: "default", Username: "uadmin", Password: "p", Enabled: true,
+			// IUserId="" — đây là seed default, không phải claim
+		})
+	}
+
+	// Claim 2 private cred — phải success dù 3 session đều đã có 1 default cred.
+	body := map[string]any{"iuser_id": "customer-x", "type": "private", "count": 2, "ttl": 0}
+	w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", body, rk.Tok)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	resp := testutil.ParseResponse(t, w)
+	var cr claimResponse
+	json.Unmarshal(resp.Data, &cr)
+	if len(cr.Credentials) != 2 {
+		t.Fatalf("expected 2 creds, got %d", len(cr.Credentials))
+	}
+
+	// Tiếp tục: claim thêm cho customer-y → phải success (vẫn còn 1 private trống)
+	body2 := map[string]any{"iuser_id": "customer-y", "type": "private", "count": 1, "ttl": 0}
+	w2 := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", body2, rk.Tok)
+	if w2.Code != 200 {
+		t.Fatalf("y claim: expected 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+
+	// Claim thêm customer-z → phải fail (cả 3 private đã có iuser claim)
+	body3 := map[string]any{"iuser_id": "customer-z", "type": "private", "count": 1, "ttl": 0}
+	w3 := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", body3, rk.Tok)
+	if w3.Code != 400 {
+		t.Fatalf("z claim: expected 400 (exhausted), got %d: %s", w3.Code, w3.Body.String())
+	}
+}
+
 // TestChange_NotPingPong — regression cho bug: change cred A → cấp B → change B → cấp A
 // → lặp vô tận giữa 2 proxy. Sau fix shuffle, qua 10 lần change phải đi qua ít nhất 3
 // session khác nhau (random rải đều trong pool 5 session).

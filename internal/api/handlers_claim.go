@@ -127,9 +127,13 @@ func availableProxiesForType(excludeProxyIds []uint, count int, sessType string)
 			continue
 		}
 		max := models.MaxCredsForType(s.Type)
+		// CHỈ count creds có i_user_id (claim cred), KHÔNG count default seed
+		// cred (label="default", iuser=""). Trước: private session luôn có 1
+		// default cred → cur=1 → max=1 → không bao giờ available, dù chưa có
+		// khách nào claim. "Max" phản ánh số iuser slot, không phải tổng cred.
 		var cur int64
 		db.DB.Model(&models.ProxyCredential{}).
-			Where("proxy_id = ? AND enabled = ? AND (expires_at IS NULL OR expires_at > ?)", p.Id, true, now).
+			Where("proxy_id = ? AND enabled = ? AND i_user_id != '' AND (expires_at IS NULL OR expires_at > ?)", p.Id, true, now).
 			Count(&cur)
 		if int(cur) < max {
 			out = append(out, p)

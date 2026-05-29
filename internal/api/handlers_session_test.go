@@ -247,8 +247,11 @@ func TestSetSessionType_ExceedsMax(t *testing.T) {
 	proxy := models.Proxy{SessionId: sess.Id, Port: 58600, Status: "running"}
 	db.DB.Create(&proxy)
 	for i := 0; i < 3; i++ {
+		// IUserId set → simulate claimed creds (default creds với IUserId="" sẽ
+		// KHÔNG count vào quota — đó là design mới sau v1.8.7)
 		db.DB.Create(&models.ProxyCredential{
 			ProxyId: proxy.Id, Username: fmt.Sprintf("u%d", i), Password: "p", Enabled: true,
+			IUserId: fmt.Sprintf("iuser%d", i),
 		})
 	}
 
@@ -281,8 +284,10 @@ func TestSetSessionTypeBatch_MixedResults(t *testing.T) {
 	pb := models.Proxy{SessionId: sb.Id, Port: 58701, Status: "running"}
 	db.DB.Create(&pb)
 	for i := 0; i < 2; i++ {
+		// Set IUserId → simulate claimed creds (count vào quota)
 		db.DB.Create(&models.ProxyCredential{
 			ProxyId: pb.Id, Username: fmt.Sprintf("ub%d", i), Password: "p", Enabled: true,
+			IUserId: fmt.Sprintf("iuser-b%d", i),
 		})
 	}
 

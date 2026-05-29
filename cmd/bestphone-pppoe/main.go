@@ -22,7 +22,7 @@ import (
 )
 
 // appVersion phải khớp với /VERSION ở repo root. Bump cả 2 cùng lúc khi ready-to-ship.
-const appVersion = "1.8.6"
+const appVersion = "1.8.7"
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)

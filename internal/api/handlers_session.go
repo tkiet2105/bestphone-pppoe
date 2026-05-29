@@ -548,11 +548,12 @@ func SetSessionType(c *gin.Context) {
 		newMax := models.MaxCredsForType(req.Type)
 		var cur int64
 		now := time.Now()
+		// Chỉ count iuser-claim creds — default seed không tính (xem checkCredLimit)
 		db.DB.Model(&models.ProxyCredential{}).
-			Where("proxy_id = ? AND enabled = ? AND (expires_at IS NULL OR expires_at > ?)", p.Id, true, now).
+			Where("proxy_id = ? AND enabled = ? AND i_user_id != '' AND (expires_at IS NULL OR expires_at > ?)", p.Id, true, now).
 			Count(&cur)
 		if int(cur) > newMax {
-			fail(c, 400, fmt.Sprintf("không thể đổi type=%s (max %d creds): session đang có %d creds active, xóa bớt trước", req.Type, newMax, cur))
+			fail(c, 400, fmt.Sprintf("không thể đổi type=%s (max %d iuser slots): session đang có %d claim active, release bớt trước", req.Type, newMax, cur))
 			return
 		}
 	}
@@ -609,10 +610,10 @@ func SetSessionTypeBatch(c *gin.Context) {
 		if err := db.DB.Where("session_id = ?", sid).First(&p).Error; err == nil {
 			var cur int64
 			db.DB.Model(&models.ProxyCredential{}).
-				Where("proxy_id = ? AND enabled = ? AND (expires_at IS NULL OR expires_at > ?)", p.Id, true, now).
+				Where("proxy_id = ? AND enabled = ? AND i_user_id != '' AND (expires_at IS NULL OR expires_at > ?)", p.Id, true, now).
 				Count(&cur)
 			if int(cur) > newMax {
-				r.Error = fmt.Sprintf("đang có %d creds, vượt max %d", cur, newMax)
+				r.Error = fmt.Sprintf("đang có %d iuser claim, vượt max %d", cur, newMax)
 				out[i] = r
 				continue
 			}
