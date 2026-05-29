@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"fmt"
 	"log"
+	"math/big"
 	"net"
 	"strconv"
 	"sync"
@@ -43,7 +45,13 @@ func Init(db *gorm.DB, hub *events.Hub, portMin, portMax int) {
 	}
 }
 
-// AllocPort — tìm port chưa dùng. Public để API tạo Proxy có thể reserve trước.
+// AllocPort — chọn random 1 port chưa dùng trong [portMin, portMax].
+//
+// Lý do random thay vì sequential: ports liên tiếp (30000, 30001, ...) dễ bị
+// scan từ ngoài. Random rải đều trong range khiến attacker phải scan rộng hơn
+// nhiều mới tìm thấy listener.
+//
+// Dùng crypto/rand để không predict được (math/rand seed mặc định cố định).
 func (m *Manager) AllocPort() (int, error) {
 	used := make(map[int]bool)
 	var ports []int
@@ -51,13 +59,20 @@ func (m *Manager) AllocPort() (int, error) {
 	for _, p := range ports {
 		used[p] = true
 	}
+	free := make([]int, 0, m.portMax-m.portMin+1)
 	for p := m.portMin; p <= m.portMax; p++ {
-		if used[p] {
-			continue
+		if !used[p] {
+			free = append(free, p)
 		}
-		return p, nil
 	}
-	return 0, fmt.Errorf("no free port in [%d,%d]", m.portMin, m.portMax)
+	if len(free) == 0 {
+		return 0, fmt.Errorf("no free port in [%d,%d]", m.portMin, m.portMax)
+	}
+	idx, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(len(free))))
+	if err != nil {
+		return 0, fmt.Errorf("rand pick: %w", err)
+	}
+	return free[idx.Int64()], nil
 }
 
 // Start — load proxy + session, bind net.Listen, spawn acceptLoop. Idempotent.
