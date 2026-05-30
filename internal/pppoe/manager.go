@@ -368,6 +368,7 @@ func (m *Manager) reconcileOnce() {
 		if IsBlockedISPIp(s.IP) {
 			log.Printf("[watchdog] session %d IP %s nằm trong dải bị chặn — demote", s.Id, s.IP)
 			m.hangupPeer(fmt.Sprintf("bp-sess-%d", s.Id))
+			RemoveReplyRouting(s.Iface, s.PppUnit)
 			errMsg := fmt.Sprintf("ISP cấp IP CGNAT/private (%s) - không dùng được", s.IP)
 			m.db.Model(&models.Session{}).Where("id = ?", s.Id).Updates(map[string]any{
 				"status":     models.StatusError,
