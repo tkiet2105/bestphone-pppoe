@@ -6,6 +6,24 @@ if (!ensureAuth()) {} else {
 
 let _detailUser = '';
 
+// typeCountBadges — render badge per loại có count > 0 (kèm số lượng).
+// Tái dùng TYPE_LABEL (icon/text/cls) từ api-client.js, đồng bộ màu với typeBadge.
+function typeCountBadges(bt) {
+  const order = ['static', 'private', 'rotating'];
+  const labels = (typeof TYPE_LABEL !== 'undefined') ? TYPE_LABEL : {
+    static:   { icon: '◼', text: 'Tĩnh',    cls: 'static' },
+    private:  { icon: '★', text: 'Private', cls: 'private' },
+    rotating: { icon: '↻', text: 'Xoay',    cls: 'rotating' },
+  };
+  const parts = order
+    .filter(t => (bt[t] || 0) > 0)
+    .map(t => {
+      const m = labels[t];
+      return `<span class="badge ${m.cls}" title="${m.text}"><span class="badge-icon">${m.icon}</span>${m.text} ×${bt[t]}</span>`;
+    });
+  return parts.length ? `<span class="row" style="gap:4px;flex-wrap:wrap">${parts.join('')}</span>` : '<span class="muted small">—</span>';
+}
+
 async function loadStatus() {
   try {
     const s = await Api.claimStatus();
@@ -45,8 +63,7 @@ async function loadUsers() {
       const exp = u.earliest_expiry
         ? `<span class="mono small">${fmtTime(u.earliest_expiry)}</span>`
         : '<span class="muted small">Vĩnh viễn</span>';
-      const bt = u.by_type || {};
-      const splits = `<span class="mono small">${bt.static||0}T / ${bt.private||0}P / ${bt.rotating||0}X</span>`;
+      const splits = typeCountBadges(u.by_type || {});
       return `<tr>
         <td class="mono">${escapeHTML(u.iuser_id)}</td>
         <td>${u.cred_count}</td>
@@ -63,11 +80,10 @@ async function loadUsers() {
 
 function fmtTime(s) {
   if (!s) return '';
-  try {
-    const d = new Date(s);
-    if (isNaN(d.getTime())) return s;
-    return d.toLocaleString('vi-VN');
-  } catch (_) { return s; }
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return s;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;
 }
 
 function fmtExpiry(expiresAt) {

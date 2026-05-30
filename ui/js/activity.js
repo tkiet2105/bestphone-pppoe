@@ -1,3 +1,7 @@
+let _offset = 0;
+let _total = 0;
+let _autoTimer = null;
+
 if (!ensureAuth()) {} else {
   renderNav('activity');
   // ?session=N hoặc ?iuser=X tự fill filter
@@ -16,10 +20,6 @@ if (!ensureAuth()) {} else {
   document.getElementById('ac-auto').addEventListener('change', toggleAuto);
   loadActivity();
 }
-
-let _offset = 0;
-let _total = 0;
-let _autoTimer = null;
 
 const CAT_LABEL = {
   dial: 'Quay số', rotate: 'Đổi IP', reconnect: 'Reconnect',
@@ -65,8 +65,10 @@ function renderRows(items) {
   }
   tbody.innerHTML = items.map(it => {
     const t = new Date(it.created_at);
-    const time = t.toLocaleTimeString('vi-VN', { hour12: false }) +
-      ' <span class="muted" style="color:#475569">' + t.toLocaleDateString('vi-VN') + '</span>';
+    const pad = (n) => String(n).padStart(2, '0');
+    const time = isNaN(t.getTime()) ? escapeHTML(String(it.created_at ?? ''))
+      : `${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}` +
+        ` <span class="muted" style="color:#475569">${pad(t.getDate())}/${pad(t.getMonth()+1)}/${t.getFullYear()}</span>`;
     const refs = [];
     if (it.session_id) refs.push(`<span class="ac-ref"><a href="/activity.html?session=${it.session_id}">Session #${it.session_id}</a></span>`);
     if (it.line_id) refs.push(`<span class="ac-ref">Line #${it.line_id}</span>`);

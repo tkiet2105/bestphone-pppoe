@@ -129,9 +129,16 @@ function parseLogLine(raw) {
   if (!m) return null;
   const ts = m[1];
   const rest = m[2];
-  // time HH:MM:SS từ ISO timestamp
-  const tm = ts.match(/T(\d{2}:\d{2}:\d{2})/);
-  const time = tm ? tm[1] : ts.slice(-8);
+  // time hh:mm:ss dd/MM/yyyy từ ISO timestamp (fallback HH:MM:SS nếu không parse được)
+  const pad = (n) => String(n).padStart(2, '0');
+  const d = new Date(ts);
+  let time;
+  if (!isNaN(d.getTime())) {
+    time = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;
+  } else {
+    const tm = ts.match(/T(\d{2}:\d{2}:\d{2})/);
+    time = tm ? tm[1] : ts.slice(-8);
+  }
 
   // pppN unit nếu nhắc tới
   const pppMatch = rest.match(/\bppp(\d+)\b/);

@@ -569,7 +569,9 @@ async function showSessionActivity(id) {
     } else {
       const rows = items.map(it => {
         const t = new Date(it.created_at);
-        const time = t.toLocaleString('vi-VN', { hour12: false });
+        const pad = (n) => String(n).padStart(2, '0');
+        const time = isNaN(t.getTime()) ? String(it.created_at ?? '')
+          : `${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())} ${pad(t.getDate())}/${pad(t.getMonth()+1)}/${t.getFullYear()}`;
         const lvlColor = it.level === 'error' ? '#fca5a5' : it.level === 'warn' ? '#fbbf24' : '#94a3b8';
         let details = '';
         if (it.details) {

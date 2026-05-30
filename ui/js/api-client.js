@@ -393,6 +393,15 @@ function escapeHTML(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// Định dạng timestamp dùng chung: hh:mm:ss dd/MM/yyyy
+function fmtTimestamp(s) {
+  if (!s) return '';
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return s;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;
+}
+
 // copyText — universal clipboard copy. navigator.clipboard chỉ work trên HTTPS/
 // localhost. HTTP plain bị browser block → fallback textarea + execCommand.
 async function copyText(text) {
