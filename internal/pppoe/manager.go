@@ -149,6 +149,17 @@ func (m *Manager) Dial(sessionID uint) error {
 		return fmt.Errorf("%s", errMsg)
 	}
 
+	// Reply-path policy routing + MSS clamp: client vào THẲNG public IP trên
+	// pppN → reply phải quay lại pppN (không ra default route). Không fatal nếu
+	// lỗi: egress qua line vẫn chạy, chỉ inbound trực tiếp bị ảnh hưởng.
+	if err := ApplyReplyRouting(ifaceName, wanIP, sess.PppUnit); err != nil {
+		log.Printf("[routing] session %d apply reply routing failed: %v", sess.Id, err)
+		activity.Warn(activity.CategoryDial, "routing_fail",
+			fmt.Sprintf("Session #%d: thiết lập policy-routing thất bại: %s", sess.Id, err.Error()),
+			activity.SessionId(sess.Id), activity.LineId(line.Id),
+			activity.F("iface", ifaceName), activity.F("ip", wanIP), activity.F("error", err.Error()))
+	}
+
 	now := time.Now()
 	sess.Iface = ifaceName
 	sess.IP = wanIP
@@ -198,6 +209,8 @@ func (m *Manager) Hangup(sessionID uint) error {
 	oldIP := sess.IP
 	peerName := fmt.Sprintf("bp-sess-%d", sess.Id)
 	m.hangupPeer(peerName)
+	// Dọn policy routing + MSS clamp (IP sắp mất → rule thành rác)
+	RemoveReplyRouting(sess.Iface, sess.PppUnit)
 	if sess.Iface != "" {
 		_ = exec.Command("ip", "link", "set", sess.Iface, "down").Run()
 	}
