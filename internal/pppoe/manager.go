@@ -502,6 +502,13 @@ func (m *Manager) RestoreState() {
 	m.db.Where("status IN (?, ?)", models.StatusConnected, models.StatusDialing).Find(&sessions)
 	for _, s := range sessions {
 		if s.Iface != "" && IsIfaceUp(s.Iface) {
+			// adopt iface đang UP — pppd vẫn sống qua app restart. Áp lại reply-path
+			// routing để fix có hiệu lực ngay mà không cần rotate toàn bộ session.
+			if s.IP != "" && !IsBlockedISPIp(s.IP) {
+				if err := ApplyReplyRouting(s.Iface, s.IP, s.PppUnit); err != nil {
+					log.Printf("[restore] session %d apply reply routing failed: %v", s.Id, err)
+				}
+			}
 			continue // adopt iface đang UP
 		}
 		log.Printf("[restore] re-dial session %d (was %s)", s.Id, s.Status)
