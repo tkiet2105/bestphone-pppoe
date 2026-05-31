@@ -143,6 +143,37 @@
     </div>
   </div>
 
+  <div class="modal-bg" id="edit-line-modal">
+    <div class="modal">
+      <h3>Sửa đường truyền</h3>
+      <input type="hidden" id="el-id">
+      <div class="form-row"><label>Tên gợi nhớ</label><input id="el-name" placeholder="VD: FPT-Q1"></div>
+      <div class="form-row"><label>Số session tối đa cho line này</label><input type="number" id="el-max" min="1"></div>
+      <div class="form-row"><label>Tài khoản ISP (tên đăng nhập PPPoE)</label>
+        <input id="el-user" placeholder="vd: fbr00chgt">
+      </div>
+      <div class="form-row"><label>Mật khẩu ISP <span class="muted small">(để trống nếu không đổi)</span></label>
+        <input id="el-pass" placeholder="">
+      </div>
+      <div class="form-row"><label>Mỗi session dùng 1 địa chỉ MAC riêng?</label>
+        <select id="el-macvlan">
+          <option value="true">Có (khuyến nghị — để có IP riêng cho từng session)</option>
+          <option value="false">Không (tất cả session dùng cùng MAC của cổng)</option>
+        </select>
+      </div>
+      <div class="form-row"><label>Danh sách MAC tự cấp <span class="muted small">(tùy chọn, 1 MAC/dòng)</span></label>
+        <textarea id="el-line-macs" rows="4" placeholder="aa:bb:cc:dd:ee:01&#10;aa:bb:cc:dd:ee:02&#10;..." style="font-family:monospace;font-size:12px"></textarea>
+      </div>
+      <div class="muted small" style="margin-top:-4px;margin-bottom:8px;color:#94a3b8">
+        Đổi tài khoản ISP / MAC chỉ áp dụng cho các session quay số lại sau đó.
+      </div>
+      <div class="actions">
+        <button class="secondary" onclick="closeModal('edit-line-modal')">Hủy</button>
+        <button onclick="submitEditLine()">Lưu</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/js/api-client.js"></script>
   <script src="/js/lines.js"></script>
 </body>

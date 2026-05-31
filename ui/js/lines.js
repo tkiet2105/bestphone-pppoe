@@ -146,7 +146,7 @@ async function loadLines() {
         <td class="actions">
           <a href="/sessions.html?line=${r.id}" title="Xem các session của đường truyền này">📡 Session</a>
           &nbsp;|&nbsp;
-          <a href="#" onclick="event.preventDefault();editLine(${r.id})" title="Sửa tài khoản ISP">✎ Sửa</a>
+          <a href="#" onclick="event.preventDefault();editLine(${r.id})" title="Sửa đường truyền (tên, số session tối đa, tài khoản ISP, MAC)">✎ Sửa</a>
           &nbsp;|&nbsp;
           <a href="#" onclick="event.preventDefault();deleteLine(${r.id},'${escapeHTML(r.name)}')" title="Xóa đường truyền" style="color:#fca5a5">✕ Xóa</a>
         </td>
@@ -186,47 +186,39 @@ async function submitCreateLine() {
   }
 }
 
+// Mở modal sửa line, fill sẵn giá trị hiện tại.
 async function editLine(id) {
   const lines = await Api.listLines();
   const l = lines.find(x => x.id === id);
   if (!l) { Toast.error('Không tìm thấy đường truyền'); return; }
-  const newUser = await Dialog.prompt(
-    `Sửa tên đăng nhập ISP cho đường truyền <b>${escapeHTML(l.name)}</b>:`,
-    { title: 'Sửa tài khoản ISP', defaultValue: l.username || '', okText: 'Tiếp tục' }
-  );
-  if (newUser === null) return;
-  const newPass = await Dialog.prompt(
-    `Sửa mật khẩu ISP cho đường truyền <b>${escapeHTML(l.name)}</b> (để trống nếu không đổi mật khẩu):`,
-    { title: 'Sửa mật khẩu ISP', defaultValue: l.password || '', password: true, okText: 'Tiếp tục' }
-  );
-  if (newPass === null) return;
+  document.getElementById('el-id').value = id;
+  document.getElementById('el-name').value = l.name || '';
+  document.getElementById('el-max').value = l.max_sessions || 8;
+  document.getElementById('el-user').value = l.username || '';
+  document.getElementById('el-pass').value = l.password || '';
+  document.getElementById('el-macvlan').value = l.use_macvlan ? 'true' : 'false';
+  document.getElementById('el-line-macs').value = l.custom_macs || '';
+  document.getElementById('edit-line-modal').classList.add('open');
+}
 
-  // MAC pool — dùng Dialog.show với textarea (Dialog.prompt chỉ là input).
-  let macsValue = l.custom_macs || '';
-  const macAction = await Dialog.show({
-    title: 'Danh sách MAC tự cấp',
-    bodyHTML: `<label style="display:block;margin-bottom:4px">1 MAC/dòng, format <span class="mono">aa:bb:cc:dd:ee:ff</span>. Để trống = auto random.</label>
-      <textarea id="el-macs" rows="6" style="width:100%;font-family:monospace;font-size:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:6px">${escapeHTML(macsValue)}</textarea>`,
-    actions: [
-      { label: 'Hủy', kind: 'secondary', value: null },
-      { label: 'Lưu', kind: 'primary', value: 'SAVE' },
-    ],
-    dismissValue: null,
-    onMount: (bg) => {
-      const ta = bg.querySelector('#el-macs');
-      if (ta) {
-        ta.focus();
-        ta.addEventListener('input', () => { macsValue = ta.value; });
-      }
-    },
-  });
-  if (macAction === null) return;
-
+async function submitEditLine() {
+  const id = parseInt(document.getElementById('el-id').value);
+  const data = {
+    name: document.getElementById('el-name').value.trim(),
+    max_sessions: parseInt(document.getElementById('el-max').value) || 8,
+    username: document.getElementById('el-user').value.trim(),
+    password: document.getElementById('el-pass').value.trim(),
+    use_macvlan: document.getElementById('el-macvlan').value === 'true',
+    custom_macs: document.getElementById('el-line-macs').value.trim(),
+  };
+  if (!data.name) { Toast.error('Tên không được để trống'); return; }
+  if (data.max_sessions < 1) { Toast.error('Số session tối đa phải >= 1'); return; }
   try {
-    await Api.updateLine(id, { username: newUser, password: newPass, custom_macs: macsValue.trim() });
-    Toast.success('Đã cập nhật');
+    await Api.updateLine(id, data);
+    Toast.success('Đã cập nhật đường truyền');
+    closeModal('edit-line-modal');
     loadLines();
-  } catch (e) { Toast.error(e.message); }
+  } catch (e) { Toast.error('Lỗi cập nhật: ' + e.message); }
 }
 
 async function deleteLine(id, name) {

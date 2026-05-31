@@ -26,6 +26,7 @@ func setupClaimRouter(t *testing.T) *testutil.RouterKit {
 	r.POST("/api/v1/change", BearerAuth(), ChangeCredentials)
 	r.GET("/api/v1/user-creds", BearerAuth(), ListUserCreds)
 	r.POST("/api/v1/release", BearerAuth(), ReleaseCredentials)
+	r.POST("/api/v1/prune", BearerAuth(), PruneCredentials)
 	r.POST("/api/v1/extend", BearerAuth(), ExtendCredentials)
 	r.GET("/api/v1/claim/status", BearerAuth(), ClaimStatus)
 	r.GET("/api/v1/claim/user-status", BearerAuth(), ClaimUserStatus)
@@ -896,5 +897,104 @@ func TestChange_PreservesType(t *testing.T) {
 	json.Unmarshal(resp2.Data, &cr2)
 	if cr2.Credentials[0].Type != "static" {
 		t.Errorf("change should preserve type, got %s", cr2.Credentials[0].Type)
+	}
+}
+
+func TestPrune_KeepsListedDeletesRest(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedConnectedSessions(t, 5)
+
+	// Claim 4 creds.
+	body := map[string]any{"iuser_id": "u-prune", "count": 4, "ttl": 0}
+	w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim", body, rk.Tok)
+	resp := testutil.ParseResponse(t, w)
+	var cr claimResponse
+	json.Unmarshal(resp.Data, &cr)
+	if len(cr.Credentials) != 4 {
+		t.Fatalf("expected 4 claimed, got %d", len(cr.Credentials))
+	}
+
+	// Giữ 2 cred đầu, prune phần còn lại.
+	keep := []uint{cr.Credentials[0].CredId, cr.Credentials[1].CredId}
+	pw := testutil.DoJSON(t, rk.R, "POST", "/api/v1/prune", map[string]any{"keep_cred_ids": keep}, rk.Tok)
+	if pw.Code != 200 {
+		t.Fatalf("prune expected 200, got %d: %s", pw.Code, pw.Body.String())
+	}
+	var presp struct {
+		Kept    int   `json:"kept"`
+		Deleted int64 `json:"deleted"`
+	}
+	json.Unmarshal(testutil.ParseResponse(t, pw).Data, &presp)
+	if presp.Kept != 2 || presp.Deleted != 2 {
+		t.Fatalf("expected kept=2 deleted=2, got kept=%d deleted=%d", presp.Kept, presp.Deleted)
+	}
+
+	var remaining int64
+	db.DB.Model(&models.ProxyCredential{}).Where("i_user_id != ''").Count(&remaining)
+	if remaining != 2 {
+		t.Fatalf("expected 2 claim creds remaining, got %d", remaining)
+	}
+	// Đúng 2 cred được giữ.
+	for _, id := range keep {
+		var n int64
+		db.DB.Model(&models.ProxyCredential{}).Where("id = ?", id).Count(&n)
+		if n != 1 {
+			t.Fatalf("kept cred #%d should still exist", id)
+		}
+	}
+}
+
+func TestPrune_EmptyListRequiresConfirm(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedConnectedSessions(t, 3)
+	testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim",
+		map[string]any{"iuser_id": "u-prune-empty", "count": 2, "ttl": 0}, rk.Tok)
+
+	// keep_cred_ids rỗng + không confirm → 400, không xóa gì.
+	w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/prune",
+		map[string]any{"keep_cred_ids": []uint{}}, rk.Tok)
+	if w.Code != 400 {
+		t.Fatalf("empty keep without confirm expected 400, got %d", w.Code)
+	}
+	var remaining int64
+	db.DB.Model(&models.ProxyCredential{}).Where("i_user_id != ''").Count(&remaining)
+	if remaining != 2 {
+		t.Fatalf("nothing should be deleted, got %d remaining", remaining)
+	}
+
+	// Có confirm → xóa sạch claim cred.
+	w2 := testutil.DoJSON(t, rk.R, "POST", "/api/v1/prune",
+		map[string]any{"keep_cred_ids": []uint{}, "confirm_delete_all": true}, rk.Tok)
+	if w2.Code != 200 {
+		t.Fatalf("empty keep with confirm expected 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+	db.DB.Model(&models.ProxyCredential{}).Where("i_user_id != ''").Count(&remaining)
+	if remaining != 0 {
+		t.Fatalf("all claim creds should be pruned, got %d remaining", remaining)
+	}
+}
+
+func TestPrune_PreservesDefaultSeed(t *testing.T) {
+	rk := setupClaimRouter(t)
+	seedConnectedSessions(t, 3)
+
+	// Tạo 1 default seed cred (không có iuser).
+	var p models.Proxy
+	db.DB.First(&p)
+	def := models.ProxyCredential{ProxyId: p.Id, Label: "default", Username: "def", Password: "x", Enabled: true}
+	db.DB.Create(&def)
+
+	// Claim 1 rồi prune sạch (confirm). Default seed phải sống sót.
+	testutil.DoJSON(t, rk.R, "POST", "/api/v1/claim",
+		map[string]any{"iuser_id": "u-seed", "count": 1, "ttl": 0}, rk.Tok)
+	w := testutil.DoJSON(t, rk.R, "POST", "/api/v1/prune",
+		map[string]any{"keep_cred_ids": []uint{}, "confirm_delete_all": true}, rk.Tok)
+	if w.Code != 200 {
+		t.Fatalf("prune expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var n int64
+	db.DB.Model(&models.ProxyCredential{}).Where("id = ?", def.Id).Count(&n)
+	if n != 1 {
+		t.Fatal("default seed cred must survive prune")
 	}
 }

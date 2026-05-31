@@ -52,6 +52,7 @@ func RegisterRoutes(r *gin.Engine) {
 		g.POST("/change", ChangeCredentials)
 		g.GET("/user-creds", ListUserCreds)
 		g.POST("/release", ReleaseCredentials)
+		g.POST("/prune", PruneCredentials)
 		g.POST("/extend", ExtendCredentials)
 		g.GET("/claim/status", ClaimStatus)
 		g.GET("/claim/user-status", ClaimUserStatus)

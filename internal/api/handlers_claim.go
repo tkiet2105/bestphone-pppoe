@@ -499,6 +499,85 @@ type extendReq struct {
 	OrderId string `json:"order_id"` // optional — chỉ extend creds thuộc đơn này
 }
 
+type pruneReq struct {
+	// KeepCredIds — danh sách cred_id giữ lại. Mọi claim cred KHÔNG nằm trong
+	// danh sách này sẽ bị xóa. Main server gửi tập cred đang active; server proxy
+	// dọn phần còn lại (creds không còn ai dùng).
+	KeepCredIds []uint `json:"keep_cred_ids"`
+	// ConfirmDeleteAll — bắt buộc =true khi keep_cred_ids rỗng (xóa sạch claim
+	// cred). Chặn request thiếu field/parse lỗi vô tình wipe toàn bộ.
+	ConfirmDeleteAll bool `json:"confirm_delete_all"`
+}
+
+// PruneCredentials — xóa toàn bộ claim cred KHÔNG nằm trong keep_cred_ids.
+//
+// Phục vụ dọn dẹp: main server biết tập cred_id đang được sử dụng, gửi lên;
+// server proxy xóa những cred còn lại (không còn người dùng).
+//
+// Phạm vi: CHỈ tác động claim cred (i_user_id != ”). Default seed cred
+// (label="default", iuser="") là hạ tầng auth mặc định của proxy nên luôn giữ
+// — kể cả khi không có trong keep_cred_ids.
+func PruneCredentials(c *gin.Context) {
+	var req pruneReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, 400, err.Error())
+		return
+	}
+	if len(req.KeepCredIds) == 0 && !req.ConfirmDeleteAll {
+		fail(c, 400, "keep_cred_ids rỗng: để xóa toàn bộ claim cred phải set confirm_delete_all=true")
+		return
+	}
+
+	claimMu.Lock()
+	defer claimMu.Unlock()
+
+	keep := make(map[uint]bool, len(req.KeepCredIds))
+	for _, id := range req.KeepCredIds {
+		keep[id] = true
+	}
+
+	// Chỉ xét claim cred (có i_user_id). Default seed cred giữ nguyên.
+	var claimCreds []models.ProxyCredential
+	db.DB.Where("i_user_id != ''").Find(&claimCreds)
+
+	delIds := make([]uint, 0, len(claimCreds))
+	proxyIds := make(map[uint]bool)
+	keptFound := 0
+	for _, cr := range claimCreds {
+		if keep[cr.Id] {
+			keptFound++
+			continue
+		}
+		delIds = append(delIds, cr.Id)
+		proxyIds[cr.ProxyId] = true
+	}
+
+	var deleted int64
+	if len(delIds) > 0 {
+		res := db.DB.Where("id IN ?", delIds).Delete(&models.ProxyCredential{})
+		deleted = res.RowsAffected
+	}
+
+	// Reload listener của các proxy bị ảnh hưởng để khớp DB.
+	for pid := range proxyIds {
+		proxysrv.M.ReloadCreds(pid)
+	}
+
+	if deleted > 0 {
+		activity.Warn(activity.CategoryClaim, "prune",
+			fmt.Sprintf("Prune claim creds: giữ %d, xóa %d cred không sử dụng", keptFound, deleted),
+			activity.ClientIP(c.ClientIP()),
+			activity.F("kept", keptFound),
+			activity.F("deleted", deleted),
+			activity.F("keep_requested", len(req.KeepCredIds)))
+	}
+	ok(c, gin.H{
+		"kept":           keptFound,
+		"deleted":        deleted,
+		"keep_requested": len(req.KeepCredIds),
+	})
+}
+
 func ClaimStatus(c *gin.Context) {
 	var totalSessions int64
 	db.DB.Model(&models.Session{}).Where("status = ?", models.StatusConnected).Count(&totalSessions)
