@@ -60,17 +60,63 @@ func IfaceIPv4(iface string) string {
 	return ""
 }
 
-// PublicIPViaIface — curl --interface <iface> https://api.ipify.org. Timeout chặt.
+// PublicIPViaIface — đo public IP qua iface, KHÔNG phụ thuộc DNS.
+//
+// Trước đây probe dùng `curl --interface <iface> https://api.ipify.org`, nhưng
+// --interface ép luôn truy vấn DNS đi qua ppp; resolver ISP thường timeout khi
+// bị bind vào iface (đã gặp trên proxy7) → PublicIP rỗng → export rơi về IP LAN.
+//
+// Fix: hỏi endpoint dạng IP-literal (Cloudflare trace) nên không cần resolve gì.
+// Trace trả về nhiều dòng key=value, lấy dòng "ip=". Nếu CF bị chặn, fallback
+// sang ipify qua --resolve (tự ghim IP, vẫn không dùng DNS hệ thống).
 func PublicIPViaIface(ctx context.Context, iface string, timeout time.Duration) (string, error) {
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
+	maxt := fmt.Sprintf("%d", int(timeout.Seconds()))
+
+	// 1) Cloudflare trace qua IP literal — không cần DNS.
+	if ip := curlTraceIP(ctx, iface, maxt, timeout); ip != "" {
+		return ip, nil
+	}
+
+	// 2) Fallback: ipify nhưng ghim sẵn IP (--resolve) để khỏi đụng DNS hệ thống.
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "curl", "-s", "--interface", iface, "--max-time", fmt.Sprintf("%d", int(timeout.Seconds())), "https://api.ipify.org")
+	cmd := exec.CommandContext(cctx, "curl", "-s", "--interface", iface,
+		"--max-time", maxt,
+		"--resolve", "api.ipify.org:443:104.26.12.205",
+		"--resolve", "api.ipify.org:443:104.26.13.205",
+		"https://api.ipify.org")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(out)), nil
+	ip := strings.TrimSpace(string(out))
+	if net.ParseIP(ip) == nil {
+		return "", fmt.Errorf("không lấy được public IP qua %s", iface)
+	}
+	return ip, nil
+}
+
+// curlTraceIP — curl https://1.1.1.1/cdn-cgi/trace qua iface, parse dòng "ip=".
+// Trả "" nếu lỗi/không tìm thấy (để caller fallback).
+func curlTraceIP(ctx context.Context, iface, maxt string, timeout time.Duration) string {
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "curl", "-s", "--interface", iface,
+		"--max-time", maxt, "https://1.1.1.1/cdn-cgi/trace")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "ip=") {
+			ip := strings.TrimSpace(line[3:])
+			if net.ParseIP(ip) != nil {
+				return ip
+			}
+		}
+	}
+	return ""
 }
