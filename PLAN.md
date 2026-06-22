@@ -1,13 +1,16 @@
-# bestphone-pppoe — design doc
+# bestphone-pppoe — kiến trúc hệ thống
 
-PPPoE multi-line proxy gateway. Mỗi PPPoE session = 1 listener SOCKS5/HTTP riêng,
+PPPoE multi-line proxy gateway. Mỗi PPPoE session = 1 listener SOCKS5/HTTP riêng;
 outbound bind socket vào iface `ppp<N>` qua `SO_BINDTODEVICE` — traffic đi đúng
 line PPPoE, **không qua default route**. Tắt WAN vẫn truy cập được proxy.
 
-Stack: Go 1.22+, SQLite (modernc/sqlite — pure Go, CGO=0), Gin, vanilla JS UI,
-systemd, nginx.
+Stack: Go (CGO=0), Gin, SQLite (glebarez/sqlite — pure Go) qua gorm, vanilla JS UI
+(no build step), systemd + nginx.
 
-> Repository này hiện chỉ chứa design doc. Engineer/Claude session kế tiếp đọc file này → tạo source theo cấu trúc §1 → implement theo §2–§8 → verify theo §9 + §12.
+> Tài liệu này mô tả **hiện trạng** (v1.9.4+). Đây không còn là design doc gốc —
+> hệ thống đã implement đầy đủ và mở rộng nhiều (claim system, access rules,
+> activity/audit log, stats, iface probe, login user, reply-path routing,
+> SOCKS5 UDP ASSOCIATE). Đọc code trong `internal/` để biết chi tiết chính xác.
 
 ---
 
@@ -15,499 +18,232 @@ systemd, nginx.
 
 ```
 bestphone-pppoe/
-├── VERSION                      # 1.0.0 — bump để trigger fleet auto-update
-├── README.md                    # quickstart
-├── PLAN.md                      # file này — design doc đầy đủ
+├── VERSION                          # bump để trigger fleet auto-update (xem §8)
+├── API.md                           # reference endpoint chi tiết
 ├── go.mod / go.sum
-├── cmd/
-│   └── bestphone-pppoe/main.go  # entry: gin server + pppoe.Init + proxysrv.Init
+├── cmd/bestphone-pppoe/main.go      # entry: config → db → hub → managers → restore → gin
 ├── internal/
-│   ├── config/                  # env load, listen addr, port range
-│   ├── db/                      # gorm.Open(sqlite) + AutoMigrate
-│   ├── models/                  # Line / Session / Proxy / Credential / Token
+│   ├── config/config.go             # env load (LISTEN_ADDR, DB_PATH, PROXY_PORT_*, DIAL_CONCURRENT...)
+│   ├── db/
+│   │   ├── db.go                    # gorm.Open(sqlite WAL) + AutoMigrate + seed admin token/user
+│   │   └── settings.go              # Get/Set Setting (key-value), GetSettingBool/Int
+│   ├── models/models.go             # Line/Session/Proxy/ProxyCredential/Token/User/AccessRule/Setting/AuditLog/ActivityLog
 │   ├── pppoe/
-│   │   ├── manager.go           # Dial/Hangup/Rotate/Watchdog/RestoreState
-│   │   ├── config.go            # gen /etc/ppp/peers/<sess> + chap/pap-secrets
-│   │   └── ifquery.go           # ip link parse, public IP probe
+│   │   ├── manager.go               # Dial/Hangup/Rotate/Watchdog/AutoRotate/Reconnect/RestoreState
+│   │   ├── config.go                # gen /etc/ppp/peers/bp-sess-<id> + chap/pap-secrets
+│   │   ├── ifquery.go               # ip link parse, IfaceIPv4, public IP probe (no-DNS), CGNAT check
+│   │   └── routing.go               # reply-path policy routing + MSS clamp (§4b)
 │   ├── proxy/server/
-│   │   ├── manager.go           # Start(proxyID)/Stop(proxyID)/ReloadCreds
-│   │   ├── listener.go          # accept + protocol multiplex
-│   │   ├── socks5.go            # SOCKS5 USER/PASS
-│   │   ├── http.go              # HTTP CONNECT + forward
-│   │   ├── dial.go              # SO_BINDTODEVICE Dialer  ← KEY
-│   │   └── auth.go              # hasAuth/authMatch constant-time
-│   ├── api/
-│   │   ├── routes.go            # gin route registration
-│   │   ├── middleware.go        # Bearer token check
-│   │   ├── handlers_line.go     # /lines CRUD
-│   │   ├── handlers_session.go  # /sessions CRUD + rotate
-│   │   ├── handlers_cred.go     # /proxies/:id/credentials CRUD + bulk
-│   │   ├── handlers_export.go   # /proxies/export text/plain ip:port:u:p
-│   │   └── handlers_health.go   # /health
-│   └── events/hub.go            # in-process pub/sub cho SSE
-├── ui/
-│   ├── index.html               # login + dashboard
-│   ├── lines.html               # list/create lines
-│   ├── sessions.html            # list/create sessions + multi-cred
+│   │   ├── manager.go               # Start/Stop/ReloadCreds/Reload*Rules/RestoreAll/cred-cleanup, AllocPort random
+│   │   ├── listener.go              # accept loop + peek-byte multiplex SOCKS5/HTTP
+│   │   ├── socks5.go                # SOCKS5: CONNECT + UDP ASSOCIATE, USER/PASS auth
+│   │   ├── udp.go                    # SOCKS5 UDP ASSOCIATE relay (§4c)  ← MỚI
+│   │   ├── http.go                  # HTTP CONNECT + forward proxy
+│   │   ├── dial.go                  # SO_BINDTODEVICE Dialer (TCP)       ← KEY
+│   │   ├── auth.go                  # credSet match constant-time
+│   │   └── access.go                # ruleSet allow/deny (deny-wins)
+│   ├── api/                         # handlers_{health,token,line,session,cred,export,
+│   │   │                            #   claim,rule,iface,stats,settings,activity,logs,events}.go
+│   │   ├── routes.go                # đăng ký toàn bộ route /api/v1
+│   │   └── middleware.go            # BearerAuth + CORS
+│   ├── activity/activity.go         # ghi ActivityLog (persist) + publish event
+│   ├── audit/audit.go               # ghi AuditLog (HTTP mutation) + publish event
+│   ├── events/hub.go                # in-process pub/sub cho SSE
+│   └── testutil/testutil.go         # SetupTestDB/Router, Seed*, DoJSON helper
+├── ui/                              # vanilla JS, deploy ra /var/www/bestphone-pppoe
+│   ├── index.html (login) + lines/sessions/rules/settings/users/activity/logs/api/export .html
 │   ├── css/app.css
-│   └── js/
-│       ├── api-client.js        # fetch wrapper Bearer auth
-│       ├── lines.js
-│       └── sessions.js
-├── deploy/
-│   ├── install.sh               # single-shot installer (root)
-│   ├── systemd/
-│   │   ├── bestphone-pppoe.service
-│   │   ├── bestphone-pppoe-update.service
-│   │   └── bestphone-pppoe-update.timer
-│   ├── nginx/bestphone-pppoe.conf
-│   └── bin/
-│       ├── bestphone-pppoe-update    # smart updater
-│       └── bestphone-pppoe-deploy-ui # rsync ui/ → /var/www/bestphone-pppoe
-└── docs/
-    └── api.md                   # OpenAPI-style endpoint reference
+│   └── js/api-client.js (+ Dialog/Toast/SSE) + lines/sessions/rules/settings/users/activity/logs/api-page .js
+└── deploy/
+    ├── install.sh                   # single-shot installer (Debian 12, root)
+    ├── systemd/bestphone-pppoe{,.update}.service + .update.timer
+    ├── nginx/bestphone-pppoe.conf
+    └── bin/bestphone-pppoe-update + bestphone-pppoe-deploy-ui
 ```
 
 ## 2. Database schema (SQLite, gorm AutoMigrate)
 
-### `lines`
-| Cột | Kiểu | Ghi chú |
-|---|---|---|
-| id | INTEGER PK | |
-| name | TEXT | hiển thị (vd "FPT-Q1") |
-| iface | TEXT | physical NIC, vd `enp3s0` |
-| use_macvlan | BOOL | true → mỗi session có macvlan riêng |
-| max_sessions | INTEGER | quota, default 8 |
-| created_at | TIMESTAMP | |
+Nguồn chính xác: `internal/models/models.go`.
 
-### `sessions`
-| Cột | Kiểu | Ghi chú |
-|---|---|---|
-| id | INTEGER PK | |
-| line_id | INTEGER FK | |
-| ppp_unit | INTEGER UNIQUE | pppX, allocate từ pool 0..999 |
-| iface | TEXT | `ppp<N>` sau khi dial xong |
-| username | TEXT | PPPoE PAP/CHAP user |
-| password | TEXT | |
-| mac | TEXT INDEX | spoof MAC (rỗng = dùng NIC gốc) |
-| status | TEXT | `disconnected\|dialing\|connected\|error` |
-| ip | TEXT | inet trên `ppp<N>` |
-| public_ip | TEXT | đo qua ipify với `--interface` |
-| last_error | TEXT | |
-| last_rotate_at | TIMESTAMP | |
+- **lines** — `id, name, iface, username, password` (ISP PPPoE cred dùng chung cho mọi
+  session của line), `use_macvlan, max_sessions, custom_macs` (pool MAC tự cấp), `created_at`.
+- **sessions** — `id, line_id, ppp_unit (uniq 0..999), iface (ppp<N>), username, password, mac,
+  type (static|private|rotating), status (disconnected|dialing|connected|error), ip, public_ip,
+  last_error, last_rotate_at, auto_rotate_seconds (0=tắt), auto_rotate_paused, connected_at,
+  rotate_fail_count, reconnect_attempts, next_reconnect_at, created_at`.
+- **proxies** — `id, session_id (uniq, 1-1), port (uniq, pool 30000–40000), status (running|stopped)`.
+- **proxy_credentials** — `id, proxy_id (idx), label, username, password, enabled, iuser_id (idx),
+  order_id (idx, idempotency claim), expires_at (TTL), created_at`. Listener auth khi `(user,pass)`
+  match BẤT KỲ row `enabled=true`. Cred `iuser_id=''` = seed/default (hạ tầng), khác = claim cred.
+- **tokens** — `id, token (uniq), label, user_id (NULL=API token, !NULL=login session), created_at`.
+- **users** — `id, username (uniq), password_hash (bcrypt), created_at, updated_at`. Tài khoản login UI.
+- **access_rules** — `id, scope (global|session), session_id, kind (domain|ip), action (allow|deny),
+  value, note, created_at`. Xem §4 access control.
+- **settings** — key-value (`reconnect_enabled`, `reconnect_max_retries`, `reconnect_pause_minutes`).
+- **audit_logs** — mutation HTTP (token_id, user_id, client_ip, action, resource_type/id, old/new, summary).
+- **activity_logs** — state transition của session/proxy/cred (kể cả background): `level, category
+  (dial|rotate|reconnect|watchdog|claim|cred|session|line|auth|proxy), action, session/line/proxy/cred/user_id,
+  iuser_id, client_ip, summary (tiếng Việt), details (JSON)`. Cleanup goroutine xóa entry > 30 ngày.
 
-### `proxies`
-| Cột | Kiểu | Ghi chú |
-|---|---|---|
-| id | INTEGER PK | |
-| session_id | INTEGER UNIQUE | 1-1 với session |
-| port | INTEGER UNIQUE | từ pool 30000–40000 |
-| status | TEXT | `running\|stopped` |
+### Quota cred theo session type (`models.MaxCredsForType`)
+`private` = 1, `static` = 5, `rotating` = 5. Mọi chức năng (rotate/change/...) giống nhau giữa các type;
+type chỉ phân biệt để claim đúng + giới hạn số user.
 
-### `proxy_credentials` (multi-cred per proxy)
-| Cột | Kiểu | Ghi chú |
-|---|---|---|
-| id | INTEGER PK | |
-| proxy_id | INTEGER INDEX FK | |
-| label | TEXT | "client-A", "legacy"... |
-| username | TEXT | |
-| password | TEXT | |
-| enabled | BOOL | default true |
+## 3. PPPoE Manager (`internal/pppoe/manager.go`)
 
-Listener authenticate khi `(user, pass)` match BẤT KỲ row `enabled=true`.
+### Dial flow (Dial)
+1. Lock per-line mutex (serialize dial cùng line) + acquire `dialSem` (global cap, env `DIAL_CONCURRENT`, default 5).
+2. **Anti-lockout**: nếu session đang `error` + last_error chứa "AuthNak" → từ chối tự dial (chỉ rotate thủ công clear).
+3. Nếu session có MAC → ensure macvlan `mvbp-<sid>` trên line.iface với MAC spoof; else peer iface = line.iface.
+4. `WritePeerFile` → `/etc/ppp/peers/bp-sess-<sid>` với `nodefaultroute, noauth, persist, maxfail 0,
+   holdoff 10, lcp-echo, mtu/mru 1492, unit <ppp_unit>, ipparam bp-sess-<sid>`; upsert chap/pap-secrets.
+5. `pppd call bp-sess-<sid> updetach`, timeout 30s; poll `ip -o link show ppp<N>`. Lỗi → `classifyPppdError`
+   (AuthNak/PADT/PADI-PADO timeout/Service-Name mismatch).
+6. Lấy IPv4 trên ppp<N>. **Từ chối IP CGNAT/private** (100.64/10, RFC1918) → hangup + error (watchdog dial lại mong IP public).
+7. `ApplyReplyRouting(iface, wanIP, ppp_unit)` (§4b) — non-fatal.
+8. Set status=connected, lưu iface/ip/connected_at; async probe `public_ip` (Cloudflare trace IP-literal → fallback
+   ipify DNS pinned, KHÔNG phụ thuộc DNS hệ thống). Publish event.
 
-### `tokens` (admin Bearer)
-| Cột | Kiểu | Ghi chú |
-|---|---|---|
-| id | INTEGER PK | |
-| token | TEXT UNIQUE | random 32 bytes hex |
-| label | TEXT | "admin-default" |
-| created_at | TIMESTAMP | |
-
-Install script sinh 1 token mặc định, lưu vào `/etc/default/bestphone-pppoe` + insert DB.
-
-## 3. PPPoE Manager (key behaviors)
-
-### Dial flow (`internal/pppoe/manager.go`)
-
-```
-Dial(sessionID):
-  lock per-line mutex (serialize concurrent dials cùng line)
-  acquire dialSem (global concurrency cap, default 5)
-  if session.MAC != "":
-    ensure macvlan `mvbp-<sid>` on line.iface với MAC spoof
-    set peer iface = macvlan name
-  else:
-    peer iface = line.iface
-  write /etc/ppp/peers/bp-sess-<sid>:
-    plugin rp-pppoe.so <peer_iface>
-    unit <ppp_unit>
-    name "<username>"; user "<username>"
-    noipdefault; usepeerdns; persist; maxfail 0
-    holdoff 10; lcp-echo-interval 20; lcp-echo-failure 3
-    mtu 1492; mru 1492
-    nodefaultroute         ← KEY: KHÔNG add default route, traffic chỉ qua khi bind
-    noauth
-    ipparam bp-sess-<sid>
-  upsert /etc/ppp/chap-secrets + pap-secrets
-  exec /usr/sbin/pppd call bp-sess-<sid> updetach
-  poll `ip -o link show ppp<N>` mỗi 500ms, timeout 30s
-  if iface UP:
-    parse IP local, save session.iface + session.ip
-    publish event session.status → connected
-    async: curl --interface ppp<N> https://api.ipify.org → public_ip
-  else:
-    hangup, status=error, last_error
-```
-
-### HARD RULE (anti-lockout)
-**Không retry sau AuthNak.** Status `error` với `last_error` chứa "AuthNak" → chỉ user manual rotate mới redial. Watchdog phải SKIP session đang ở `error`.
+### Hangup
+Kill pppd (`pkill -TERM` → `-KILL`), `RemoveReplyRouting`, bring down iface, status=disconnected, publish.
 
 ### Rotate
-1. Hangup pppd (`kill -TERM` PID, fallback `pkill -f bp-sess-<id>`).
-2. Sleep 3s (BRAS settle).
-3. Dial lại.
-4. Mặc định chấp nhận same-IP = success (env `BESTPHONE_PPPOE_ROTATE_REQUIRE_NEW_IP=1` để đổi).
+Per-session `rotateMu`. Hangup → sleep 3s (BRAS settle) → clear error/status → dial lại. Publish old_ip/new_ip/same_ip.
+Env `BESTPHONE_PPPOE_ROTATE_REQUIRE_NEW_IP` (flag, hiện không enforce).
 
-### Watchdog
-Goroutine 20s tick. Với mỗi session `status=connected`:
-- Nếu iface KHÔNG còn UP → redial (trừ khi `disabled_at` set).
-- Nếu pppd PID không tồn tại → redial.
+### Watchdog (tick 20s) + AutoRotate (tick 30s) + Reconnect
+- Watchdog: demote session connected nhưng IP đã thành CGNAT; redial session connected nhưng iface DOWN; reconnect
+  session error theo settings (`reconnect_enabled`, `reconnect_max_retries`, `reconnect_pause_minutes`) với backoff/pause.
+- AutoRotate: session có `auto_rotate_seconds>0` && !paused && connected → rotate khi tới hạn; cap 3 song song;
+  fail → pause + tăng counter (resume qua API).
+- RestoreState (boot): adopt session có iface UP, dial lại session connected-trong-DB-nhưng-iface-DOWN.
 
-### RestoreState (boot)
-- Đọc tất cả `ppp.unit` hiện có (`ip -br link | grep ^ppp`).
-- Adopt session nào đã có iface UP.
-- Dial pending session (status=connected trong DB nhưng iface không UP).
+### HARD RULE — anti-lockout
+**Không tự retry sau AuthNak.** Watchdog SKIP session `error` do AuthNak. Chỉ user rotate thủ công mới redial.
 
-## 4. Proxy listener (THE CORE)
+## 4. Proxy listener (CORE — `internal/proxy/server/`)
 
-### Multi-protocol multiplex (`internal/proxy/server/listener.go`)
+### Multiplex (`listener.go`)
+Accept loop (deadline 1s để graceful shutdown). `handle`: peek 1 byte → `0x05` = SOCKS5, `A-Z` = HTTP, else close.
+`ifaceFn` closure lookup `session.iface` mỗi connection (iface đổi sau rotate).
 
-```go
-acceptLoop:
-  conn := ln.Accept()
-  go handle(conn):
-    peek 1 byte
-    if b == 0x05:        // SOCKS5
-      handleSocks5(conn)
-    else if isASCII(b):  // HTTP CONNECT or method
-      handleHTTP(conn)
-    else:
-      close
-```
-
-### SO_BINDTODEVICE (`dial.go`) ← CORE BEHAVIOR
-
-```go
-func newBoundDialer(iface string) *net.Dialer {
-    return &net.Dialer{
-        Timeout:   15 * time.Second,
-        KeepAlive: 30 * time.Second,
-        Control: func(network, address string, c syscall.RawConn) error {
-            var opErr error
-            c.Control(func(fd uintptr) {
-                opErr = syscall.SetsockoptString(int(fd),
-                    syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, iface)
-            })
-            return opErr
-        },
-    }
-}
-```
-
-- Tất cả outbound socket bind vào `ppp<N>` của session đó.
-- Yêu cầu CAP_NET_RAW (service chạy root qua systemd).
-- Kết hợp `nodefaultroute` trong peer config → kernel KHÔNG add `0.0.0.0/0 dev ppp<N>` → WAN traffic gốc giữ nguyên. Khi tắt WAN, traffic dial-out của user-app vẫn fail, nhưng socket BOUND ppp<N> vẫn route được vì bind explicit.
+### SO_BINDTODEVICE (`dial.go`) ← CORE
+`newBoundDialer(iface)` set `SO_BINDTODEVICE` trong `Dialer.Control`. Mọi outbound TCP bind ppp<N>. Cần CAP_NET_RAW
+(systemd `AmbientCapabilities`). Kết hợp `nodefaultroute` → kernel không add `0/0 dev ppp<N>` → socket bound vẫn route khi tắt WAN.
 
 ### Auth (`auth.go`)
+SOCKS5 offer method `0x02` (USER/PASS) nếu có cred, else `0x00`. HTTP đọc `Proxy-Authorization: Basic`.
+`credSet.match` constant-time (`subtle.ConstantTimeCompare`), iterate hết (không early-return). `ReloadCreds` hot-swap (RWMutex).
 
-```go
-func (l *listener) hasAuth() bool {
-    return len(l.creds) > 0
-}
+### Access control (`access.go`) — deny-wins
+`ruleSet.allowed(dest, clientIP)`: (1) bất kỳ deny match → block; (2) có allow rule (tách theo kind domain/ip) →
+strict mode, chỉ allow match mới qua; (3) không allow rule → mở. **kind=domain match `dest`** (host đích); **kind=ip
+match `clientIP`** (IP client gọi proxy — "chặn IP X dùng proxy"). Hot-reload global + session-scope.
 
-func (l *listener) authMatch(user, pass []byte) bool {
-    matched := 0
-    for _, c := range l.creds {
-        u := subtle.ConstantTimeCompare(user, []byte(c.Username))
-        p := subtle.ConstantTimeCompare(pass, []byte(c.Password))
-        matched |= u & p
-    }
-    return matched == 1
-}
-```
+### 4b. Reply-path routing (`routing.go`)
+Vấn đề: client kết nối trực tiếp tới `public_ip:port` của line → gói tới trên ppp<N> nhưng reply (src=public_ip) trace
+main route → ra default route (eth0) → asymmetric → bulk data mất. Giải pháp per ppp_unit: table `1000+ppp_unit`,
+`ip route default dev ppp<N> table T` + `ip rule from <public_ip> table T` + iptables TCPMSS clamp (MTU 1492). Áp trong
+Dial + khi RestoreState adopt; gỡ trong Hangup/demote. Non-fatal (egress proxy vẫn chạy qua bound socket).
 
-- SOCKS5 offer method `0x02` (USER/PASS) nếu hasAuth, else `0x00`.
-- HTTP đọc `Proxy-Authorization: Basic <b64>`.
-- `ReloadCreds(proxyID)` re-query DB credentials cho listener đó, swap atomically (RW mutex).
+### 4c. SOCKS5 UDP ASSOCIATE (`udp.go`) ← MỚI, luôn bật
+- Client gửi `CMD=0x03` trên control-conn TCP (đã auth) → tạo relay 2 socket:
+  - **clientConn**: listen trên IP client đã reach được (`conn.LocalAddr`), port ephemeral — **KHÔNG bind ppp**
+    (phải reach từ client). Báo về client làm `BND.ADDR:BND.PORT` (`socks5ReplyAddr`).
+  - **targetConn**: bind ppp<N> qua `SO_BINDTODEVICE` (`listenPacketBound`/`newBoundListenConfig`, bản UDP của dial.go)
+    → mọi UDP egress ra đúng line.
+- Datagram header RFC1928 `RSV(2) FRAG(1) ATYP DST.ADDR DST.PORT DATA` (`parseUDPHeader`/`buildUDPHeader`):
+  client→target forward DATA; target→client bọc header gửi về. ATYP IPv4/IPv6/Domain (resolve qua resolver bind iface,
+  cache theo association, không leak DNS). Drop `FRAG!=0`.
+- Lock địa chỉ client ở gói đầu (chống spoof). Access rule check TRƯỚC resolve (clientIP = IP control-conn).
+- Vòng đời: sống cùng control-conn; control-conn đóng / idle 60s / listener Stop → teardown cả 2 socket.
+- Caveat: port relay ephemeral → host không được chặn UDP inbound tới IP đó; proxy sau NAT có hạn chế cố hữu của UDP ASSOCIATE.
 
 ### Lifecycle (`manager.go`)
-
-| Method | Hành vi |
-|---|---|
-| `Start(proxyID)` | Load proxy + session từ DB, tạo `net.Listen("tcp", ":port")`, spawn acceptLoop. Status → `running`. |
-| `Stop(proxyID)` | Cancel ctx, close listener, status → `stopped`. |
-| `ReloadCreds(proxyID)` | Re-query `proxy_credentials WHERE proxy_id=X AND enabled=true`, swap. |
-| `RestoreAll()` | Boot: với mỗi proxy status=`running` trong DB → `Start`. |
+`Start(proxyID)` (idempotent, AllocPort random crypto), `Stop`, `ReloadCreds`, `ReloadGlobalRules`/`ReloadSessionRules`,
+`RestoreAll` (boot), `StartCredCleanup` (60s xóa cred hết hạn + reload).
 
 ## 5. REST API
 
-Base path: `/api/v1`. Auth: header `Authorization: Bearer <token>`.
+Base `/api/v1`. Auth header `Authorization: Bearer <token>` (hoặc `?token=` cho SSE). Public: `GET /health`,
+`POST /auth/login`. Danh sách đầy đủ: `internal/api/routes.go` + `API.md`.
 
-### Health
-- `GET /health` → `{service, version, uptime}`
+- **auth**: `/auth/me`, `/auth/logout`, `/auth/change-password`.
+- **tokens** (API token): `GET/POST /tokens`, `DELETE /tokens/:id`.
+- **ifaces**: `GET /ifaces`, `POST /ifaces/probe` (passive PADI/PADO discovery).
+- **lines**: `GET/POST /lines`, `GET/PUT /lines/:id`, `POST /lines/:id/delete` (cascade), `POST /lines/:id/sessions[/bulk]`.
+- **sessions**: `GET /sessions[/:id]`, `POST /sessions/:id/{delete,rotate,enabled,auto-rotate/resume}`,
+  `PUT /sessions/:id/{auto-rotate,type}`, batch `POST /sessions/{auto-rotate/batch,auto-rotate/resume,type/batch}`,
+  `POST /rotate` (bulk có concurrency), `GET /sessions/:id/activity`.
+- **credentials**: `GET/POST /proxies/:id/credentials`, `POST .../bulk`, `PUT/DELETE .../:cid`.
+- **export**: `GET /proxies/export?type=public|local&format=text|json` → `ip:port:user:pass` mỗi cred enabled 1 dòng.
+- **claim** (§5b): `POST /{claim,change,release,prune,extend}`, `GET /user-creds`, `GET /claim/{status,user-status,users}`.
+- **rules**: `GET/POST /rules`, `PUT/DELETE /rules/:id`.
+- **misc**: `GET /stats`, `GET /logs` (journalctl backend+pppd), `GET /activity`, `GET /events` (SSE),
+  `GET/PUT /settings`.
 
-### Lines
-- `POST /lines` body `{name, iface, use_macvlan, max_sessions}` → 201
-- `GET  /lines` → list + session_count
-- `GET  /lines/:id` → detail
-- `POST /lines/:id/delete` → cascade xóa sessions + proxies
+### 5b. Claim system (`handlers_claim.go`) — luồng đặt cred cho khách
+Idempotency theo `(iuser_id, order_id, type)` (có order_id) hoặc `(iuser_id, type)` (legacy). `ClaimCredentials`:
+chọn proxy theo type (`availableProxiesForType` shuffle để rải tải, lọc session connected + proxy running + còn slot
+`MaxCredsForType - claimed`), cấp `ProxyCredential` label="claim" user/pass random + TTL tùy chọn; claim lại cùng key →
+trả cred cũ (retry-safe). `ChangeCredentials` đổi sang proxy khác giữ order_id+TTL. `ExtendCredentials` cộng dồn TTL
+(còn hạn → cộng; hết hạn → tính từ now); scope `cred_ids > order_id > iuser_id+type`. `ReleaseCredentials` xóa claim cred
+(giữ seed cred). `PruneCredentials` main server gửi danh sách cred_ids còn dùng → proxy xóa các claim cred KHÁC
+(empty list cần `confirm_delete_all`). `ClaimStatus`/`ClaimUserStatus`/`ClaimUsers` báo cáo slot + user.
 
-### Sessions
-- `POST /lines/:id/sessions` body `{username, password, mac?}` → tạo + dial + start proxy
-- `POST /lines/:id/sessions/bulk` body `{count, creds:[{user,pass,mac?}]}` → tạo N song song
-- `GET  /sessions` → list
-- `GET  /sessions/:id` → detail (runtime status, public_ip)
-- `POST /sessions/:id/delete` → hangup + remove peer + remove DB
-- `POST /sessions/:id/rotate` → hangup → redial
-- `POST /sessions/:id/enabled` body `{enabled}` → start/stop listener (giữ tunnel)
+## 6. UI (vanilla JS, no build)
 
-### Credentials (multi-cred per proxy)
-- `GET    /proxies/:id/credentials` → list
-- `POST   /proxies/:id/credentials` body `{label, username, password}` → tạo 1
-- `POST   /proxies/:id/credentials/bulk` body `{count, label_prefix}` → tạo N random
-- `PUT    /proxies/:id/credentials/:cid` body `{username?, password?, enabled?}`
-- `DELETE /proxies/:id/credentials/:cid`
+10 trang: `index.html` (login → `bp_token` localStorage), `lines/sessions/rules/settings/users/activity/logs/api/export`.
+`js/api-client.js` = `Api` object (`_req` thêm Bearer, 401 → clear token + redirect), helpers `Dialog`/`Toast`/
+`renderNav`/`statusBadge`/`typeBadge`/`fmtTimestamp`/`copyText`, SSE `subscribeEvents`. Nginx phục vụ static + proxy `/api/`.
 
-Mọi mutation gọi `proxysrv.M.ReloadCreds(proxyID)` (hot-reload, không close listener).
+## 7. Install (`deploy/install.sh`)
 
-### Export proxy (BULK GET — endpoint "lấy proxy nhanh")
-- `GET /proxies/export?type=public|local&format=text|json`
-- `text/plain`:
-  ```
-  <ip>:<port>:<user>:<pass>
-  <ip>:<port>:<user>:<pass>
-  ```
-  1 dòng / 1 cred enabled. Session có 3 cred → 3 dòng.
-- `type=public` → dùng `session.public_ip`, `type=local` → IP LAN của host.
-- `json`: array `[{session_id, line, port, ip, creds:[{user,pass,label}]}]`
+Single-shot Debian 12, root. Bước: preflight (root + os-release) → apt deps (ppp pppoe iproute2 iptables nginx sqlite3
+curl jq git rsync openssl tar) → cài Go `GO_VERSION` (hiện 1.22.6) nếu thiếu → clone/pull `/opt/bestphone-pppoe`
+(hỗ trợ `INSTALL_GITHUB_TOKEN`) → `CGO_ENABLED=0 go build -o /usr/local/bin/bestphone-pppoe ./cmd/bestphone-pppoe` →
+copy bin scripts → state dirs → `/etc/default/bestphone-pppoe` (admin token random `openssl rand -hex 32` + seed user
+admin/admin) + `/etc/default/bestphone-pppoe-pull-token` → systemd enable+start → nginx config + reload → deploy-ui →
+health check → in summary.
 
-### Rotate batch
-- `POST /rotate` body `{session_ids:[...], concurrency?:5}` → fire-and-return, results streamed qua SSE.
+systemd service: `User=root`, `AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_NET_BIND_SERVICE`,
+`EnvironmentFile=/etc/default/bestphone-pppoe`, `Restart=on-failure`.
 
-### Events (SSE)
-- `GET /events` (Bearer auth qua query `?token=` cho EventSource).
-- Stream events: `session.status`, `session.public_ip`, `session.rotate`, `proxy.cred_changed`.
+> **Caveat bảo trì**: `go.mod` khai báo `go 1.25.0` nhưng install.sh cài Go 1.22.6 → dựa vào GOTOOLCHAIN auto-download
+> (cần mạng) để build. Khi đụng phần này nên đồng bộ GO_VERSION với go.mod.
 
-### Tokens
-- `GET    /tokens` → list (mask token, only show last 4)
-- `POST   /tokens` body `{label}` → trả full token 1 lần (không lưu plain)
-- `DELETE /tokens/:id`
+## 8. Auto-update (`deploy/bin/bestphone-pppoe-update`, timer 1h)
 
-## 6. UI (vanilla JS, no build step)
+So `local VERSION` vs `origin/main:VERSION`; chỉ pull+rebuild+restart+deploy-ui khi khác. Token private repo từ
+`/etc/default/bestphone-pppoe-pull-token`. Timer: `OnBootSec=2min, OnUnitActiveSec=1h, RandomizedDelaySec=5min`.
 
-3 trang chính:
-- `index.html` — login form → POST `/api/v1/auth/login` với token, lưu localStorage, redirect.
-- `lines.html` — danh sách lines + modal tạo + per-row "Sessions" link.
-- `sessions.html` — bảng sessions với column: line, ppp_unit, iface, status, public_ip, creds_count, port. Actions: rotate, enable toggle, edit creds, copy export.
-- Bonus: `events` SSE stream để live update status.
+### HARD RULE — bump VERSION
+- Bump `VERSION` **chỉ khi ready ship** → fleet pull trong ≤1h. Push KHÔNG đụng VERSION → fleet không pull (debug an toàn).
+- Mỗi bump VERSION **phải** sync const `appVersion` trong `cmd/bestphone-pppoe/main.go` cùng giá trị.
 
-`api-client.js` wrapper:
-```js
-async function _req(method, path, body) {
-  const token = localStorage.getItem('bp_token');
-  const r = await fetch(`/api/v1${path}`, {
-    method, headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (r.status === 401) { location.href='/'; return; }
-  return r.json();
-}
-```
+## 9. Verification
 
-Style: minimal CSS, không framework, table + modal đơn giản. Tách `tklib` mini (toast, dialog) inline.
-
-## 7. Install script (`deploy/install.sh`)
-
-Single-shot, idempotent, chạy với root. Curl-pipe:
-
+### Routing safety (tắt WAN vẫn dùng proxy) — TCP
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tkiet2105/bestphone-pppoe/main/deploy/install.sh | sudo bash
+curl -x socks5://u:p@host:30001 https://api.ipify.org   # → IP PPPoE
+ip route del default; ip link set eth0 down
+curl https://api.ipify.org                              # → fail
+curl -x socks5://u:p@host:30001 https://api.ipify.org   # → vẫn IP PPPoE (socket bound ppp<N>)
 ```
 
-Các step:
-
-1. **Pre-flight**: check Debian 12 (`/etc/os-release`), check root.
-2. **Apt deps**: `apt-get update && apt-get install -y ppp pppoe iproute2 iptables nginx sqlite3 curl ca-certificates jq git`
-3. **Go install**: nếu `go version` không có hoặc `< 1.22` → download `go1.22.x.linux-amd64.tar.gz` từ go.dev → `/usr/local/go`, symlink `/usr/local/bin/go`.
-4. **Clone repo**: `git clone https://github.com/tkiet2105/bestphone-pppoe /opt/bestphone-pppoe`. Nếu đã có → `git pull`.
-5. **Build**:
-   ```bash
-   cd /opt/bestphone-pppoe
-   CGO_ENABLED=0 go build -o /usr/local/bin/bestphone-pppoe ./cmd/bestphone-pppoe
-   ```
-6. **Bin scripts**: copy `deploy/bin/bestphone-pppoe-update` + `bestphone-pppoe-deploy-ui` → `/usr/local/bin/`, chmod 755.
-7. **State dirs**: `mkdir -p /var/lib/bestphone-pppoe /var/log/bestphone-pppoe /var/www/bestphone-pppoe /etc/ppp/peers`.
-8. **Initial config**:
-   - Sinh admin token: `TOKEN=$(openssl rand -hex 32)`.
-   - Ghi `/etc/default/bestphone-pppoe`:
-     ```bash
-     LISTEN_ADDR=0.0.0.0:8080
-     PROXY_PORT_MIN=30000
-     PROXY_PORT_MAX=40000
-     ADMIN_TOKEN=<token>
-     GITHUB_PULL_TOKEN=
-     ```
-     mode 0600.
-   - First-run: binary detect DB rỗng → seed token row từ env `ADMIN_TOKEN`.
-9. **systemd**:
-   - Copy `bestphone-pppoe.service` → `/etc/systemd/system/`:
-     ```ini
-     [Service]
-     EnvironmentFile=/etc/default/bestphone-pppoe
-     ExecStart=/usr/local/bin/bestphone-pppoe
-     Restart=on-failure
-     User=root
-     AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
-     ```
-   - Copy update service + timer (xem step 11).
-   - `systemctl daemon-reload && systemctl enable --now bestphone-pppoe`.
-10. **Nginx**: copy `bestphone-pppoe.conf` → `/etc/nginx/sites-available/`, symlink to `sites-enabled/`, `nginx -t && systemctl reload nginx`. Config: proxy `/api/` → `127.0.0.1:8080`, static `/` → `/var/www/bestphone-pppoe`.
-11. **Auto-update**:
-    - `bestphone-pppoe-update.service` (oneshot `ExecStart=/usr/local/bin/bestphone-pppoe-update`).
-    - `bestphone-pppoe-update.timer`:
-      ```ini
-      [Timer]
-      OnBootSec=2min
-      OnUnitActiveSec=1h
-      RandomizedDelaySec=5min
-      Persistent=true
-      ```
-    - `systemctl enable --now bestphone-pppoe-update.timer`.
-12. **Deploy UI**: `bestphone-pppoe-deploy-ui` (rsync `/opt/bestphone-pppoe/ui/` → `/var/www/bestphone-pppoe/`, cache-bust `?v=$(date +%s)` trên link script/css).
-13. **Print summary**:
-    - URL: `http://<host>/` (or HTTPS nếu có cert)
-    - Admin token (echo 1 lần)
-    - Lệnh check: `journalctl -u bestphone-pppoe -f`
-
-## 8. Auto-update (`/usr/local/bin/bestphone-pppoe-update`)
-
+### UDP ASSOCIATE
 ```bash
-#!/bin/bash
-set -e
-. /etc/default/bestphone-pppoe
-
-REPO=/opt/bestphone-pppoe
-cd "$REPO"
-
-if [ -n "$GITHUB_PULL_TOKEN" ]; then
-  AUTH="Authorization: Basic $(printf 'tkiet2105:%s' "$GITHUB_PULL_TOKEN" | base64 -w0)"
-  FETCH_OPT="-c http.extraHeader=$AUTH"
-else
-  FETCH_OPT=""
-fi
-
-local_ver=$(cat VERSION 2>/dev/null | tr -d '[:space:]')
-git $FETCH_OPT fetch origin main --quiet
-remote_ver=$(git show origin/main:VERSION 2>/dev/null | tr -d '[:space:]')
-
-if [ "$local_ver" = "$remote_ver" ]; then
-  echo "version $local_ver (latest)"
-  exit 0
-fi
-
-echo "version $local_ver → $remote_ver"
-git $FETCH_OPT pull origin main
-export PATH=$PATH:/usr/local/go/bin
-CGO_ENABLED=0 go build -o /usr/local/bin/bestphone-pppoe ./cmd/bestphone-pppoe
-systemctl restart bestphone-pppoe
-bestphone-pppoe-deploy-ui
-echo "updated"
+# DNS over UDP qua SOCKS5 UDP (client hỗ trợ UDP ASSOCIATE, vd curl mới):
+curl --socks5 u:p@host:30001 https://example.com        # nếu client resolve qua proxy
+# hoặc dùng tool gửi UDP qua relay tới STUN/echo server, xác nhận source IP == IP line PPPoE.
 ```
 
-### Quy tắc bump VERSION (HARD RULE)
-- Bump VERSION **chỉ khi ready ship** → fleet client pull trong ≤1h.
-- Push code KHÔNG đụng VERSION → debug an toàn, client không pull.
-- Mỗi bump phải sync `cmd/bestphone-pppoe/main.go` const `appVersion` = `VERSION` file value.
-
-## 9. Routing safety verification (CRITICAL E2E)
-
-Khi build xong, MUST verify hành vi "tắt WAN vẫn dùng proxy":
-
+### Build/test (CI được — udp_test.go bind iface="" loopback)
 ```bash
-# Setup: 1 line PPPoE đã connect, 1 session ppp0 IP public X.X.X.X
-# Default route: 192.168.1.1 qua eth0 (WAN gateway nhà)
-ip route        # 0.0.0.0/0 via 192.168.1.1 dev eth0
-ip route show dev ppp0  # cụ thể subnet, KHÔNG có 0/0
-
-# Test 1: proxy vẫn work
-curl -x socks5://user:pass@host:30001 https://api.ipify.org
-# → trả X.X.X.X (IP PPPoE)
-
-# Test 2: tắt WAN
-ip route del default
-ip link set eth0 down
-
-curl https://api.ipify.org  # → fail (no route)
-curl -x socks5://user:pass@host:30001 https://api.ipify.org
-# → vẫn trả X.X.X.X — vì socket bound ppp0 qua SO_BINDTODEVICE
-
-# Recovery
-ip link set eth0 up
-dhclient eth0
+CGO_ENABLED=0 go build ./... && go vet ./... && go test ./...
 ```
+Manual cần máy PPPoE thật: egress UDP đúng IP line, DNS resolve không leak, client SOCKS5 UDP interop.
 
-Nếu test 2 fail → có nghĩa SO_BINDTODEVICE chưa apply, hoặc `nodefaultroute` thiếu, hoặc kernel route lookup sai → DEBUG.
-
-## 10. Critical files để engineer/Claude session khác tạo
-
-Thứ tự ưu tiên:
-
-| Priority | File | Cần kế thừa từ `/opt/boxphone` (dự án cũ) |
-|---|---|---|
-| P0 | `internal/proxy/server/dial.go` | Sao gần nguyên (đơn giản, ~30 dòng) |
-| P0 | `internal/pppoe/config.go` (peer template) | Sao có chỉnh `ipparam` |
-| P0 | `internal/pppoe/manager.go` Dial flow | Strip hết VPN driver, chỉ giữ PPPoE path |
-| P0 | `cmd/bestphone-pppoe/main.go` | New, gọn — không có license/best-ws |
-| P1 | `internal/models/models.go` | Sao Line/Session/Proxy/Credential, BỎ tất cả VPN |
-| P1 | `internal/proxy/server/listener.go + socks5.go + http.go + auth.go` | Sao, bỏ TPROXY/IP_TRANSPARENT |
-| P1 | `internal/api/handlers_*.go` | Sao tương ứng (line/session/cred/export) |
-| P2 | `deploy/install.sh` | Viết mới (ngắn hơn, không Mode 1/2/license) |
-| P2 | `deploy/bin/bestphone-pppoe-update` | Sao từ `bestphone-update`, đổi path |
-| P2 | `ui/` | Port BestControl subset (lines/sessions/creds page only) |
-| P3 | `docs/api.md` | OpenAPI reference |
-
-## 11. Khác biệt CHÍNH so với `bestphone-gateway-v2`
-
-| Aspect | bestphone-gateway-v2 (cũ) | bestphone-pppoe (mới) |
-|---|---|---|
-| Modes | Mode 1 + Mode 2 + license | KHÔNG mode, KHÔNG license |
-| VPN drivers | wireguard/openvpn/singbox/ipsec/nordvpn | KHÔNG có |
-| Streaming | full subsystem | KHÔNG có |
-| Devices/UID/best-ws | có | KHÔNG có |
-| TPROXY/IP_TRANSPARENT | có (transparent mode) | KHÔNG — chỉ SOCKS5/HTTP explicit |
-| Network hardening | EnsureLANIsolation, MASQUERADE, DNS redirect | KHÔNG — minimal |
-| DB | nhiều bảng, có VPN lines | chỉ 5 bảng (lines/sessions/proxies/creds/tokens) |
-| Auth | JWT + license token | Bearer token tĩnh |
-| Repo deps | best-ws, BestControl, Central, bestphone-wiper | standalone |
-
-## 12. Verification end-to-end (sau khi build xong)
-
-1. `curl -fsSL .../install.sh | sudo bash` trên Debian 12 fresh → service `bestphone-pppoe` active.
-2. `curl http://localhost:8080/api/v1/health` → 200 `{version, uptime}`.
-3. Tạo line: `POST /api/v1/lines` với iface eth1.
-4. Tạo session với PPPoE creds → dial OK, `ip link` thấy `ppp0`.
-5. Listener spawn trên port 30000+.
-6. `curl -x socks5://u:p@host:30001 https://api.ipify.org` → trả public IP của PPPoE.
-7. Thêm cred thứ 2 qua API → reload, curl với cred 2 → vẫn OK.
-8. Tắt WAN → curl SOCKS5 vẫn work (routing safety verify §9).
-9. Rotate session → public_ip có thể đổi (BRAS dependent), status `connected`.
-10. Bump VERSION 1.0.0 → 1.0.1 + push → trong ≤1h, timer fire → binary rebuild + restart.
-11. Auto-clean: `systemctl restart bestphone-pppoe` → RestoreState adopt iface UP → listener resume.
-
----
-
-**Status**: design doc — chưa implement. Engineer/Claude tiếp theo đọc file này, tạo source theo cấu trúc §1, viết theo §2–§8. E2E test theo §9 + §12.
+### E2E (sau install trên Debian 12 fresh)
+health → tạo line → tạo session (dial OK, `ip link` thấy ppp<N>) → listener spawn 30000+ → curl SOCKS5/HTTP →
+thêm cred reload → tắt WAN vẫn work → rotate → claim/extend/release → bump VERSION → timer rebuild.

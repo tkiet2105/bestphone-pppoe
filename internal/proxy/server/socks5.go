@@ -14,10 +14,10 @@ const (
 	socks5MethodNone = 0x00
 	socks5MethodUP   = 0x02
 
-	socks5CmdConnect  = 0x01
-	socks5AtypIPv4    = 0x01
-	socks5AtypDomain  = 0x03
-	socks5AtypIPv6    = 0x04
+	socks5CmdConnect = 0x01
+	socks5AtypIPv4   = 0x01
+	socks5AtypDomain = 0x03
+	socks5AtypIPv6   = 0x04
 
 	socks5RepOK            = 0x00
 	socks5RepGeneralFail   = 0x01
@@ -76,7 +76,8 @@ func (l *listener) handleSocks5(conn net.Conn, firstByte byte) {
 	if hdr[0] != socks5Ver {
 		return
 	}
-	if hdr[1] != socks5CmdConnect {
+	cmd := hdr[1]
+	if cmd != socks5CmdConnect && cmd != socks5CmdUDPAssociate {
 		_ = socks5Reply(conn, socks5RepCmdNotSupport)
 		return
 	}
@@ -113,6 +114,16 @@ func (l *listener) handleSocks5(conn net.Conn, firstByte byte) {
 		return
 	}
 	port := binary.BigEndian.Uint16(portBuf[:])
+
+	if cmd == socks5CmdUDPAssociate {
+		// DST.ADDR/DST.PORT của request UDP ASSOCIATE là địa chỉ client DỰ ĐỊNH
+		// gửi từ đó (thường = 0) — đọc xong nhưng không dùng để hạn chế. Control-
+		// conn phải mở suốt vòng đời association nên bỏ deadline.
+		_ = conn.SetDeadline(time.Time{})
+		l.runUDPAssociate(conn)
+		return
+	}
+
 	addr := net.JoinHostPort(host, strconv.Itoa(int(port)))
 
 	// Access control: deny-wins
@@ -171,8 +182,29 @@ func (l *listener) socks5AuthUP(conn net.Conn) bool {
 }
 
 func socks5Reply(conn net.Conn, rep byte) error {
-	// VER REP RSV ATYP(IPv4) BND.ADDR(0.0.0.0) BND.PORT(0)
-	_, err := conn.Write([]byte{socks5Ver, rep, 0x00, socks5AtypIPv4, 0, 0, 0, 0, 0, 0})
+	// BND = 0.0.0.0:0 cho các nhánh lỗi / CONNECT.
+	return socks5ReplyAddr(conn, rep, net.IPv4zero, 0)
+}
+
+// socks5ReplyAddr — reply với BND.ADDR/BND.PORT cụ thể (UDP ASSOCIATE cần báo
+// địa chỉ relay cho client). ATYP theo họ địa chỉ của bndIP.
+func socks5ReplyAddr(conn net.Conn, rep byte, bndIP net.IP, bndPort uint16) error {
+	var buf []byte
+	if ip4 := bndIP.To4(); ip4 != nil {
+		buf = make([]byte, 0, 4+4+2)
+		buf = append(buf, socks5Ver, rep, 0x00, socks5AtypIPv4)
+		buf = append(buf, ip4...)
+	} else if ip16 := bndIP.To16(); ip16 != nil {
+		buf = make([]byte, 0, 4+16+2)
+		buf = append(buf, socks5Ver, rep, 0x00, socks5AtypIPv6)
+		buf = append(buf, ip16...)
+	} else {
+		buf = append(buf, socks5Ver, rep, 0x00, socks5AtypIPv4, 0, 0, 0, 0)
+	}
+	var p [2]byte
+	binary.BigEndian.PutUint16(p[:], bndPort)
+	buf = append(buf, p[:]...)
+	_, err := conn.Write(buf)
 	return err
 }
 
@@ -202,4 +234,3 @@ func containsAny(s string, subs ...string) bool {
 	}
 	return false
 }
-

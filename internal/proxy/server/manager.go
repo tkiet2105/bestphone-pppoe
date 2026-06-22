@@ -22,7 +22,7 @@ type Manager struct {
 	hub         *events.Hub
 	mu          sync.Mutex
 	listeners   map[uint]*listener // proxyID → listener
-	globalRules []Rule              // compiled global rules cache
+	globalRules []Rule             // compiled global rules cache
 	globalMu    sync.RWMutex
 	portMin     int
 	portMax     int
