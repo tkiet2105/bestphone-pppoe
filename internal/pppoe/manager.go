@@ -183,7 +183,6 @@ func (m *Manager) Dial(sessionID uint) error {
 	return nil
 }
 
-
 func (m *Manager) probePublicIP(sessionID uint, iface string) {
 	ip, err := PublicIPViaIface(context.Background(), iface, 10*time.Second)
 	if err != nil || ip == "" {
@@ -360,46 +359,149 @@ func (m *Manager) autoRotateOnce() {
 	wg.Wait()
 }
 
+// reconcileAction — quyết định reconcile cho 1 session connected.
+type reconcileAction int
+
+const (
+	reconNoop             reconcileAction = iota
+	reconRedial                           // iface DOWN → quay số lại
+	reconDemote                           // liveIP CGNAT/private/link-local → hạ về error
+	reconUpdateAndReapply                 // IP đã drift → cập nhật DB + áp lại routing
+	reconReapply                          // IP khớp nhưng policy-routing thiếu → áp lại
+)
+
+// reconcileCapPerTick — số session được sửa mỗi tick (tránh storm ip/iptables/curl
+// khi vừa khởi động phải lành hàng trăm line; phần còn lại để các tick sau).
+const reconcileCapPerTick = 25
+
+// reconcileDecision — hàm THUẦN: quyết định hành động từ trạng thái quan sát được.
+//
+//	ifaceUp: iface có UP. liveIP: IfaceIPv4 hiện tại. dbIP: sess.IP trong DB.
+//	blocked: IsBlockedISPIp(liveIP). healthy: RoutingHealthy(...).
+func reconcileDecision(ifaceUp bool, liveIP, dbIP string, blocked, healthy bool) reconcileAction {
+	if !ifaceUp {
+		return reconRedial
+	}
+	if liveIP == "" {
+		return reconNoop // iface UP nhưng chưa có IPv4 (đang IPCP) — chờ tick sau
+	}
+	if blocked {
+		return reconDemote
+	}
+	if liveIP != dbIP {
+		return reconUpdateAndReapply
+	}
+	if !healthy {
+		return reconReapply
+	}
+	return reconNoop
+}
+
 func (m *Manager) reconcileOnce() {
+	// Snapshot trạng thái kernel 1 lần/tick (2 exec) thay vì mỗi session.
+	rules := RuleSourceIPs()
+	tbls := TablesWithDefaultDev()
+
 	var sessions []models.Session
 	m.db.Where("status = ?", models.StatusConnected).Find(&sessions)
+	budget := reconcileCapPerTick
 	for _, s := range sessions {
-		// 1) Demote session "connected" nhưng dùng IP CGNAT/private — không có ích cho proxy
-		if IsBlockedISPIp(s.IP) {
-			log.Printf("[watchdog] session %d IP %s nằm trong dải bị chặn — demote", s.Id, s.IP)
-			m.hangupPeer(fmt.Sprintf("bp-sess-%d", s.Id))
-			RemoveReplyRouting(s.Iface, s.PppUnit)
-			errMsg := fmt.Sprintf("ISP cấp IP CGNAT/private (%s) - không dùng được", s.IP)
-			m.db.Model(&models.Session{}).Where("id = ?", s.Id).Updates(map[string]any{
-				"status":     models.StatusError,
-				"last_error": errMsg,
-			})
-			m.publish("session.status", map[string]any{
-				"session_id": s.Id, "status": models.StatusError, "error": errMsg,
-			})
-			activity.Warn(activity.CategoryWatchdog, "demote_blocked_ip",
-				fmt.Sprintf("Session #%d bị watchdog demote vì IP %s nằm trong dải bị chặn", s.Id, s.IP),
-				activity.SessionId(s.Id), activity.F("blocked_ip", s.IP))
-			continue
-		}
 		if s.Iface == "" {
 			continue
 		}
-		if IsIfaceUp(s.Iface) {
+		ifaceUp := IsIfaceUp(s.Iface)
+		liveIP := ""
+		if ifaceUp {
+			liveIP = IfaceIPv4(s.Iface)
+		}
+		blocked := IsBlockedISPIp(liveIP)
+		healthy := RoutingHealthy(s.Iface, s.PppUnit, liveIP, rules, tbls)
+		act := reconcileDecision(ifaceUp, liveIP, s.IP, blocked, healthy)
+		if act == reconNoop {
 			continue
+		}
+		if budget <= 0 {
+			break // hết hạn ngạch tick này — phần còn lại tick sau
+		}
+		budget--
+		go m.reconcileApply(s.Id, act, liveIP)
+	}
+
+	m.reconnectErrorSessions()
+}
+
+// reconcileApply — thực thi 1 hành động reconcile (chạy trong goroutine). Khoá
+// rotateMu của session để không giẫm lên Rotate/Dial đang chạy; bỏ qua nếu bận.
+func (m *Manager) reconcileApply(sid uint, act reconcileAction, liveIP string) {
+	muIf, _ := m.rotateMu.LoadOrStore(sid, &sync.Mutex{})
+	mu := muIf.(*sync.Mutex)
+	if !mu.TryLock() {
+		return // đang rotate/dial — để lần sau
+	}
+	defer mu.Unlock()
+
+	// Nạp lại trạng thái mới nhất trong khoá (có thể đã đổi giữa lúc quyết định).
+	var s models.Session
+	if err := m.db.First(&s, sid).Error; err != nil || s.Status != models.StatusConnected || s.Iface == "" {
+		return
+	}
+
+	switch act {
+	case reconRedial:
+		if IsIfaceUp(s.Iface) {
+			return // đã UP lại
 		}
 		log.Printf("[watchdog] session %d iface %s DOWN — redial", s.Id, s.Iface)
 		activity.Warn(activity.CategoryWatchdog, "iface_down_redial",
 			fmt.Sprintf("Session #%d: interface %s đã DOWN, watchdog quay số lại", s.Id, s.Iface),
 			activity.SessionId(s.Id), activity.F("iface", s.Iface))
-		go func(sid uint) {
-			if err := m.Dial(sid); err != nil {
-				log.Printf("[watchdog] redial session %d failed: %v", sid, err)
-			}
-		}(s.Id)
-	}
+		if err := m.Dial(sid); err != nil {
+			log.Printf("[watchdog] redial session %d failed: %v", sid, err)
+		}
 
-	m.reconnectErrorSessions()
+	case reconDemote:
+		log.Printf("[watchdog] session %d IP %s nằm trong dải bị chặn — demote", s.Id, liveIP)
+		m.hangupPeer(fmt.Sprintf("bp-sess-%d", s.Id))
+		RemoveReplyRouting(s.Iface, s.PppUnit)
+		errMsg := fmt.Sprintf("ISP cấp IP CGNAT/private (%s) - không dùng được", liveIP)
+		m.db.Model(&models.Session{}).Where("id = ?", s.Id).Updates(map[string]any{
+			"status":     models.StatusError,
+			"last_error": errMsg,
+		})
+		m.publish("session.status", map[string]any{
+			"session_id": s.Id, "status": models.StatusError, "error": errMsg,
+		})
+		activity.Warn(activity.CategoryWatchdog, "demote_blocked_ip",
+			fmt.Sprintf("Session #%d bị watchdog demote vì IP %s nằm trong dải bị chặn", s.Id, liveIP),
+			activity.SessionId(s.Id), activity.F("blocked_ip", liveIP))
+
+	case reconUpdateAndReapply:
+		oldIP := s.IP
+		if err := ApplyReplyRouting(s.Iface, liveIP, s.PppUnit); err != nil {
+			log.Printf("[watchdog] session %d reapply routing failed: %v", s.Id, err)
+			return
+		}
+		m.db.Model(&models.Session{}).Where("id = ?", s.Id).Update("ip", liveIP)
+		m.publish("session.status", map[string]any{
+			"session_id": s.Id, "status": models.StatusConnected, "iface": s.Iface, "ip": liveIP,
+		})
+		log.Printf("[watchdog] session %d IP drift %s → %s, routing đã áp lại", s.Id, oldIP, liveIP)
+		activity.Warn(activity.CategoryWatchdog, "ip_drift_reconciled",
+			fmt.Sprintf("Session #%d: IP interface đổi %s → %s, đã cập nhật + áp lại policy-routing", s.Id, oldIP, liveIP),
+			activity.SessionId(s.Id), activity.F("old_ip", oldIP), activity.F("new_ip", liveIP),
+			activity.F("iface", s.Iface))
+		go m.probePublicIP(s.Id, s.Iface) // đồng bộ public_ip cho hiển thị
+
+	case reconReapply:
+		if err := ApplyReplyRouting(s.Iface, liveIP, s.PppUnit); err != nil {
+			log.Printf("[watchdog] session %d reapply routing failed: %v", s.Id, err)
+			return
+		}
+		log.Printf("[watchdog] session %d policy-routing thiếu — đã áp lại (IP=%s)", s.Id, liveIP)
+		activity.Info(activity.CategoryWatchdog, "routing_reapplied",
+			fmt.Sprintf("Session #%d: policy-routing thiếu, đã áp lại cho IP %s", s.Id, liveIP),
+			activity.SessionId(s.Id), activity.F("iface", s.Iface), activity.F("ip", liveIP))
+	}
 }
 
 func (m *Manager) reconnectErrorSessions() {
@@ -502,12 +604,22 @@ func (m *Manager) RestoreState() {
 	m.db.Where("status IN (?, ?)", models.StatusConnected, models.StatusDialing).Find(&sessions)
 	for _, s := range sessions {
 		if s.Iface != "" && IsIfaceUp(s.Iface) {
-			// adopt iface đang UP — pppd vẫn sống qua app restart. Áp lại reply-path
-			// routing để fix có hiệu lực ngay mà không cần rotate toàn bộ session.
-			if s.IP != "" && !IsBlockedISPIp(s.IP) {
-				if err := ApplyReplyRouting(s.Iface, s.IP, s.PppUnit); err != nil {
-					log.Printf("[restore] session %d apply reply routing failed: %v", s.Id, err)
-				}
+			// adopt iface đang UP — pppd vẫn sống qua app restart. Đọc IP THẬT trên
+			// interface (không tin s.IP trong DB có thể đã cũ do IPCP đổi IP), cập
+			// nhật DB + áp lại reply-path routing theo IP hiện tại để egress đúng.
+			liveIP := IfaceIPv4(s.Iface)
+			if liveIP == "" || IsBlockedISPIp(liveIP) {
+				// iface UP nhưng không có IP public dùng được → để watchdog
+				// demote/redial xử lý; không áp routing rác.
+				continue
+			}
+			if liveIP != s.IP {
+				log.Printf("[restore] session %d IP drift %s → %s", s.Id, s.IP, liveIP)
+				m.db.Model(&models.Session{}).Where("id = ?", s.Id).Update("ip", liveIP)
+				go m.probePublicIP(s.Id, s.Iface)
+			}
+			if err := ApplyReplyRouting(s.Iface, liveIP, s.PppUnit); err != nil {
+				log.Printf("[restore] session %d apply reply routing failed: %v", s.Id, err)
 			}
 			continue // adopt iface đang UP
 		}

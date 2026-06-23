@@ -72,6 +72,76 @@ func ApplyReplyRouting(iface, ip string, pppUnit int) error {
 	return nil
 }
 
+// RuleSourceIPs — đọc `ip rule show`, trả tập các source IP đang có rule
+// `from <ip> ...`. Dùng để biết line nào đã có policy-rule egress (snapshot
+// 1 lần/tick, tránh gọi mỗi session). Lỗi → map rỗng (caller coi như chưa có).
+func RuleSourceIPs() map[string]bool {
+	out, _ := runIP("ip", "rule", "show")
+	return parseRuleSourceIPs(out)
+}
+
+func parseRuleSourceIPs(out string) map[string]bool {
+	res := make(map[string]bool)
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		for i, w := range f {
+			if w == "from" && i+1 < len(f) {
+				ip := f[i+1]
+				if ip != "all" {
+					res[ip] = true
+				}
+			}
+		}
+	}
+	return res
+}
+
+// TablesWithDefaultDev — đọc `ip route show table all`, trả map table→iface cho
+// các route `default dev pppX ... table T`. Dùng kiểm policy-table đã có default
+// route ra đúng line chưa.
+func TablesWithDefaultDev() map[int]string {
+	out, _ := runIP("ip", "route", "show", "table", "all")
+	return parseTablesWithDefaultDev(out)
+}
+
+func parseTablesWithDefaultDev(out string) map[int]string {
+	res := make(map[int]string)
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 || f[0] != "default" {
+			continue
+		}
+		var iface string
+		var tbl int = -1
+		for i, w := range f {
+			if w == "dev" && i+1 < len(f) {
+				iface = f[i+1]
+			}
+			if w == "table" && i+1 < len(f) {
+				if n, err := strconv.Atoi(f[i+1]); err == nil {
+					tbl = n
+				}
+			}
+		}
+		if iface != "" && tbl >= 0 {
+			res[tbl] = iface
+		}
+	}
+	return res
+}
+
+// RoutingHealthy — policy routing của line đã đầy đủ chưa: có rule `from ip` VÀ
+// table `1000+unit` có `default dev iface`. rules/tbls là snapshot 1 lần/tick.
+func RoutingHealthy(iface string, pppUnit int, ip string, rules map[string]bool, tbls map[int]string) bool {
+	if iface == "" || ip == "" {
+		return false
+	}
+	if !rules[ip] {
+		return false
+	}
+	return tbls[policyTable(pppUnit)] == iface
+}
+
 // RemoveReplyRouting — gỡ rule + flush table + MSS clamp cho 1 line. Idempotent;
 // nuốt lỗi (rule có thể đã không tồn tại). Cleanup theo table number (ổn định
 // theo ppp_unit) nên không cần biết IP cũ — an toàn cả khi IP đã đổi.

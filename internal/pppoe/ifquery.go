@@ -39,8 +39,19 @@ func IsIfaceUp(iface string) bool {
 	if err != nil {
 		return false
 	}
-	s := string(out)
-	return strings.Contains(s, "state UP") || strings.Contains(s, "state UNKNOWN") || strings.Contains(s, "<POINTOPOINT")
+	return ifaceUpFromLinkShow(string(out))
+}
+
+// ifaceUpFromLinkShow — parse trạng thái từ `ip -o link show`. UP nếu state UP
+// hoặc UNKNOWN (ppp khi hoạt động báo "state UNKNOWN"). KHÔNG dựa vào cờ
+// <POINTOPOINT>: cờ này luôn có ở MỌI iface ppp kể cả khi state DOWN (zombie —
+// addr còn bám nhưng link đã rớt). Bug cũ dùng <POINTOPOINT> → mọi ppp luôn bị
+// coi là UP → watchdog không bao giờ redial line DOWN → egress chết vĩnh viễn.
+func ifaceUpFromLinkShow(out string) bool {
+	if strings.Contains(out, "state DOWN") {
+		return false
+	}
+	return strings.Contains(out, "state UP") || strings.Contains(out, "state UNKNOWN")
 }
 
 // IfaceIPv4 — parse `ip -4 -o addr show <iface>` → first inet.
