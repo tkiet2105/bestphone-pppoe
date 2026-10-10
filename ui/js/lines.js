@@ -165,10 +165,11 @@ async function submitCreateLine() {
     username: document.getElementById('nl-user').value.trim(),
     password: document.getElementById('nl-pass').value.trim(),
     use_macvlan: document.getElementById('nl-macvlan').value === 'true',
-    max_sessions: parseInt(document.getElementById('nl-max').value) || 8,
+    max_sessions: parseInt(document.getElementById('nl-max').value) || 0,
     custom_macs: document.getElementById('nl-macs').value.trim(),
   };
   if (!data.name || !data.iface) { Toast.error('Tên + cổng mạng là bắt buộc'); return; }
+  if (data.max_sessions < 1) { Toast.error('Số session tối đa phải >= 1'); return; }
   if (!data.username || !data.password) {
     const ok = await Dialog.confirm(
       'Bạn chưa nhập tài khoản ISP. Các phiên của đường truyền này sẽ <b>không quay số được</b>.\n\nVẫn tạo đường truyền trống?',
@@ -193,7 +194,7 @@ async function editLine(id) {
   if (!l) { Toast.error('Không tìm thấy đường truyền'); return; }
   document.getElementById('el-id').value = id;
   document.getElementById('el-name').value = l.name || '';
-  document.getElementById('el-max').value = l.max_sessions || 8;
+  document.getElementById('el-max').value = l.max_sessions || '';
   document.getElementById('el-user').value = l.username || '';
   document.getElementById('el-pass').value = l.password || '';
   document.getElementById('el-macvlan').value = l.use_macvlan ? 'true' : 'false';
@@ -205,7 +206,7 @@ async function submitEditLine() {
   const id = parseInt(document.getElementById('el-id').value);
   const data = {
     name: document.getElementById('el-name').value.trim(),
-    max_sessions: parseInt(document.getElementById('el-max').value) || 8,
+    max_sessions: parseInt(document.getElementById('el-max').value) || 0,
     username: document.getElementById('el-user').value.trim(),
     password: document.getElementById('el-pass').value.trim(),
     use_macvlan: document.getElementById('el-macvlan').value === 'true',

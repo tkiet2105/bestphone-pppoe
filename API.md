@@ -268,7 +268,7 @@ Bỏ trống → probe tất cả NIC up + có carrier.
   "username": "fbr00chgt@vnn",
   "password": "3b4r7U5L",
   "use_macvlan": true,
-  "max_sessions": 32,
+  "max_sessions": 100,
   "custom_macs": "aa:bb:cc:dd:ee:01\naa:bb:cc:dd:ee:02"
 }
 ```
@@ -280,12 +280,13 @@ Bỏ trống → probe tất cả NIC up + có carrier.
 | username | string | optional | ISP PPPoE PAP/CHAP |
 | password | string | optional | |
 | use_macvlan | bool | optional | mặc định false |
-| max_sessions | int | optional | mặc định 8 |
+| max_sessions | int | ✓ | ≥ 1. Số session (= số proxy) tối đa của line, lưu và tôn trọng **đúng** số admin đặt: không mặc định, không cắt trần. Tạo session vượt số này → 400 |
 | custom_macs | string | optional | Pool MAC user tự cấp, 1 MAC/dòng (cũng accept `,` hoặc space separator). Khi tạo session, system pick MAC chưa dùng từ pool; hết pool hoặc rỗng → tự sinh ngẫu nhiên. Format: `aa:bb:cc:dd:ee:ff` (lowercase, có `:`, 6 octet hex). Duplicate được tự lọc. |
 
 **Success 200** `data` = [Line object](#line-object)
 
 **Errors**:
+- `400 "max_sessions phải >= 1 ..."` — thiếu hoặc ≤ 0
 - `400 "MAC không hợp lệ: \"<X>\" (cần format aa:bb:cc:dd:ee:ff)"` — validate fail
 
 ### GET /api/v1/lines
@@ -308,6 +309,7 @@ Bỏ trống → probe tất cả NIC up + có carrier.
 **Success 200** `data` = Line updated
 
 **Errors**:
+- `400 "max_sessions phải >= 1 ..."` — nếu gửi `max_sessions` ≤ 0. Hạ `max_sessions` dưới số session đang có thì không xoá session nào, chỉ chặn tạo thêm.
 - `400 "MAC không hợp lệ: ..."` — nếu `custom_macs` có entry sai format
 
 ### POST /api/v1/lines/:id/delete
@@ -355,7 +357,9 @@ Tạo 1 session.
 
 **Errors**:
 - `404 "line not found"`
+- `400 "line đã đủ số session tối đa (max_sessions=N, đang có M) ..."` — line đã đủ `max_sessions`
 - `400 "cần ISP cred: ..."`, `"proxy_auth.mode=manual cần username + password"`, `"proxy_auth.mode phải là random|manual|none"`
+- `500 "server hết ppp unit ... tăng PPP_UNIT_MAX"`, `"server hết cổng proxy trống ..."` — giới hạn kỹ thuật thật của server (ppp unit dùng chung cả server, mặc định 2048; dải cổng `PROXY_PORT_MIN..MAX`)
 - `500 "dial: <err>"`, `"proxy start: <err>"`
 
 ### POST /api/v1/lines/:id/sessions/bulk
@@ -364,12 +368,12 @@ Tạo N session tuần tự (2s/lần) + 3 retry trên PADI timeout.
 
 **Body**:
 ```json
-{ "count": 32, "type": "rotating", "proxy_auth": { "mode": "random" } }
+{ "count": 70, "type": "rotating", "proxy_auth": { "mode": "random" } }
 ```
 
 | Field | Type | Required | Note |
 |-------|------|----------|------|
-| count | int | ✓ | 1..50 |
+| count | int | ✓ | 1..(max_sessions − số session đang có của line). Vượt → `400 "line chỉ còn X chỗ (max_sessions=N, đang có M session) ..."` |
 | type | string | optional | `static` \| `private` \| `rotating` (default `rotating`); áp dụng cho mọi session tạo ra |
 | proxy_auth | object | optional | dùng chung cho mọi session |
 
@@ -1020,7 +1024,7 @@ Stream `journalctl` của backend hoặc pppd.
   "username": "fbr00chgt@vnn",
   "password": "3b4r7U5L",
   "use_macvlan": true,
-  "max_sessions": 32,
+  "max_sessions": 100,
   "custom_macs": "aa:bb:cc:dd:ee:01\naa:bb:cc:dd:ee:02",
   "created_at": "2026-05-27T10:00:00Z"
 }

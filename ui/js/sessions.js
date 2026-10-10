@@ -527,7 +527,7 @@ async function submitCreateSession() {
   const count = parseInt(document.getElementById('sm-count').value) || 1;
   const mode = document.getElementById('sm-proxy-mode').value;
   const sessType = document.getElementById('sm-type').value || 'rotating';
-  if (count < 1 || count > 50) { Toast.error('Count phải 1..50'); return; }
+  if (count < 1) { Toast.error('Số lượng phải >= 1'); return; }
   const proxyAuth = { mode };
   if (mode === 'manual') {
     proxyAuth.username = document.getElementById('sm-proxy-user').value.trim();

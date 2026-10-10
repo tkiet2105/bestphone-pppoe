@@ -66,8 +66,8 @@
         <div class="muted small" id="sm-line-info" style="margin-top:4px"></div>
       </div>
       <div class="form-row"><label>Số lượng session cần tạo</label>
-        <input type="number" id="sm-count" value="1" min="1" max="50">
-        <div class="muted small" style="margin-top:4px">Tối đa 50. Tất cả đều dùng tài khoản ISP của line, mỗi cái 1 IP riêng.</div>
+        <input type="number" id="sm-count" value="1" min="1">
+        <div class="muted small" style="margin-top:4px">Tối đa = số chỗ còn trống của line (max_sessions − số session đang có). Tất cả đều dùng tài khoản ISP của line, mỗi cái 1 IP riêng.</div>
       </div>
       <div class="form-row"><label>Loại proxy (type)</label>
         <select id="sm-type">

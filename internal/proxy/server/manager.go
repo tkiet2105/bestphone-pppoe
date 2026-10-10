@@ -65,14 +65,24 @@ func (m *Manager) AllocPort() (int, error) {
 			free = append(free, p)
 		}
 	}
-	if len(free) == 0 {
-		return 0, fmt.Errorf("no free port in [%d,%d]", m.portMin, m.portMax)
+	// Port trống trong DB vẫn có thể đang bị socket khác giữ (listener cũ chưa
+	// đóng, hoặc cổng outbound ephemeral nằm trong dải) → thử bind trước khi chọn,
+	// tránh session connected mà proxy "bind: address already in use".
+	for tries := 0; len(free) > 0 && tries < 64; tries++ {
+		idx, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(len(free))))
+		if err != nil {
+			return 0, fmt.Errorf("rand pick: %w", err)
+		}
+		i := int(idx.Int64())
+		port := free[i]
+		if ln, err := net.Listen("tcp", net.JoinHostPort("0.0.0.0", strconv.Itoa(port))); err == nil {
+			_ = ln.Close()
+			return port, nil
+		}
+		free[i] = free[len(free)-1]
+		free = free[:len(free)-1]
 	}
-	idx, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(len(free))))
-	if err != nil {
-		return 0, fmt.Errorf("rand pick: %w", err)
-	}
-	return free[idx.Int64()], nil
+	return 0, fmt.Errorf("server hết cổng proxy trống trong [%d,%d] — nới PROXY_PORT_MIN/MAX", m.portMin, m.portMax)
 }
 
 // Start — load proxy + session, bind net.Listen, spawn acceptLoop. Idempotent.

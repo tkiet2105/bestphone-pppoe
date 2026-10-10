@@ -23,7 +23,7 @@ import (
 // Table T = policyTableBase + ppp_unit (ổn định theo unit → cleanup idempotent).
 
 // policyTableBase — base cao để tránh các table reserved (253 default, 254 main,
-// 255 local). ppp_unit 0..999 → table 1000..1999.
+// 255 local). ppp_unit 0..PPP_UNIT_MAX-1 → table 1000..(1000+PPP_UNIT_MAX-1).
 const policyTableBase = 1000
 
 func policyTable(pppUnit int) int { return policyTableBase + pppUnit }

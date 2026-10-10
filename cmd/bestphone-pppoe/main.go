@@ -47,6 +47,7 @@ func main() {
 
 	activity.Init(db.DB, hub)
 	pppoe.Init(db.DB, hub, cfg.DialConcurrent, cfg.RotateNewIP)
+	pppoe.MaxUnit = cfg.PppUnitMax
 	proxysrv.Init(db.DB, hub, cfg.ProxyPortMin, cfg.ProxyPortMax)
 
 	pppoe.M.EnsurePhysicalNICsUp()

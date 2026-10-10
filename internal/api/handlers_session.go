@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -19,8 +20,12 @@ import (
 	proxysrv "github.com/tkiet2105/bestphone-pppoe/internal/proxy/server"
 )
 
-// allocMu — serialize ppp_unit + proxy port allocation cho bulk parallel.
-var allocMu sync.Mutex
+// lineFullError — line đã đủ max_sessions admin đặt. Trả 400 (lỗi nghiệp vụ, không phải 500).
+type lineFullError struct{ max, have int64 }
+
+func (e *lineFullError) Error() string {
+	return fmt.Sprintf("line đã đủ số session tối đa (max_sessions=%d, đang có %d) — tăng max_sessions của line để thêm", e.max, e.have)
+}
 
 // randHexInternal — N bytes hex string. Mirror Mode 2 helper.
 func randHexInternal(n int) string {
@@ -38,7 +43,7 @@ func randMacGo() string {
 
 // pickCustomMacOrRandom — nếu line có CustomMacs, chọn MAC chưa được session
 // nào của line này dùng. Hết pool hoặc rỗng → fallback random LAA.
-// Caller phải nắm allocMu để bảo vệ race condition (sinh + insert session).
+// Caller phải nắm pppoe.AllocMu để bảo vệ race condition (sinh + insert session).
 func pickCustomMacOrRandom(line models.Line) string {
 	pool := models.ParseMacs(line.CustomMacs)
 	if len(pool) == 0 {
@@ -92,6 +97,11 @@ func CreateLineSession(c *gin.Context) {
 	}
 	sess, p, err := createSessionAndDial(line, req)
 	if err != nil {
+		var full *lineFullError
+		if errors.As(err, &full) {
+			fail(c, 400, err.Error())
+			return
+		}
 		fail(c, 500, err.Error())
 		return
 	}
@@ -117,8 +127,19 @@ func CreateLineSessionsBulk(c *gin.Context) {
 		fail(c, 400, err.Error())
 		return
 	}
-	if req.Count <= 0 || req.Count > 50 {
-		fail(c, 400, "count must be 1..50")
+	// Trần = đúng max_sessions admin đặt cho line (không cố định 50).
+	if req.Count <= 0 {
+		fail(c, 400, "count phải >= 1")
+		return
+	}
+	var have int64
+	db.DB.Model(&models.Session{}).Where("line_id = ?", line.Id).Count(&have)
+	if room := int64(line.MaxSessions) - have; int64(req.Count) > room {
+		if room < 0 {
+			room = 0
+		}
+		fail(c, 400, fmt.Sprintf("line chỉ còn %d chỗ (max_sessions=%d, đang có %d session) — giảm count hoặc tăng max_sessions",
+			room, line.MaxSessions, have))
 		return
 	}
 	if line.Username == "" || line.Password == "" {
@@ -139,6 +160,12 @@ func CreateLineSessionsBulk(c *gin.Context) {
 		}
 		sub := createSessionReq{Type: req.Type, ProxyAuth: req.ProxyAuth}
 		sess, _, err := createSessionAndDial(line, sub)
+		var full *lineFullError
+		if errors.As(err, &full) {
+			// Có session được tạo song song (API khác) → dừng, không vượt trần.
+			out = out[:i]
+			break
+		}
 		for retry := 1; retry <= maxRetries && err != nil && isPADITimeout(err.Error()) && sess != nil; retry++ {
 			log.Printf("[bulk-create] session %d PADI timeout, retry %d/%d", sess.Id, retry, maxRetries)
 			time.Sleep(time.Duration(3+retry*2) * time.Second)
@@ -217,10 +244,23 @@ func createSessionAndDial(line models.Line, req createSessionReq) (*models.Sessi
 		mac = pickCustomMacOrRandom(line)
 	}
 
-	allocMu.Lock()
+	pppoe.AllocMu.Lock()
+	// Trần session của line = đúng max_sessions admin đặt. Đọc lại trong khoá:
+	// admin có thể vừa đổi max, và bulk/API song song không được vượt trần.
+	var cur models.Line
+	if err := db.DB.First(&cur, line.Id).Error; err != nil {
+		pppoe.AllocMu.Unlock()
+		return nil, nil, fmt.Errorf("load line: %w", err)
+	}
+	var have int64
+	db.DB.Model(&models.Session{}).Where("line_id = ?", line.Id).Count(&have)
+	if have >= int64(cur.MaxSessions) {
+		pppoe.AllocMu.Unlock()
+		return nil, nil, &lineFullError{max: int64(cur.MaxSessions), have: have}
+	}
 	pppUnit, err := pppoe.AllocPppUnit(db.DB)
 	if err != nil {
-		allocMu.Unlock()
+		pppoe.AllocMu.Unlock()
 		return nil, nil, err
 	}
 	sess := models.Session{
@@ -233,22 +273,22 @@ func createSessionAndDial(line models.Line, req createSessionReq) (*models.Sessi
 		Status:   models.StatusDisconnected,
 	}
 	if err := db.DB.Create(&sess).Error; err != nil {
-		allocMu.Unlock()
+		pppoe.AllocMu.Unlock()
 		return nil, nil, err
 	}
 	port, err := proxysrv.M.AllocPort()
 	if err != nil {
 		db.DB.Delete(&sess)
-		allocMu.Unlock()
+		pppoe.AllocMu.Unlock()
 		return nil, nil, err
 	}
 	p := models.Proxy{SessionId: sess.Id, Port: port, Status: "stopped"}
 	if err := db.DB.Create(&p).Error; err != nil {
 		db.DB.Delete(&sess)
-		allocMu.Unlock()
+		pppoe.AllocMu.Unlock()
 		return nil, nil, err
 	}
-	allocMu.Unlock()
+	pppoe.AllocMu.Unlock()
 
 	// Apply proxy_auth mode → seed ProxyCredential (CLIENT auth — KHÔNG phải ISP).
 	mode := "random"
@@ -363,8 +403,9 @@ func DeleteSession(c *gin.Context) {
 	_ = pppoe.M.Hangup(s.Id)
 	pppoe.RemovePeerFile(s.Id)
 	pppoe.RemoveMacvlan(s.Id)
-	pppoe.RemoveSessionSecrets(s.Username)
 	db.DB.Delete(&s)
+	// SAU khi xoá DB: chỉ gỡ secret nếu không còn line/session nào dùng tài khoản này.
+	pppoe.RemoveSessionSecrets(db.DB, s.Username)
 	activity.Info(activity.CategorySession, "delete",
 		fmt.Sprintf("Xóa session #%d (line #%d, user=%s, MAC=%s)", s.Id, s.LineId, s.Username, s.MAC),
 		activity.SessionId(s.Id), activity.LineId(s.LineId), activity.ClientIP(c.ClientIP()),
