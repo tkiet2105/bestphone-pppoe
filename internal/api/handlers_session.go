@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -147,51 +146,38 @@ func CreateLineSessionsBulk(c *gin.Context) {
 		return
 	}
 
-	type result struct {
-		SessionId uint   `json:"session_id"`
-		Status    string `json:"status"`
-		Error     string `json:"error,omitempty"`
+	// Chạy NỀN, giãn cách + tự thử lại (bulk_job.go). Trả trạng thái job ngay.
+	j, err := startBulkJob(line, req.Count, createSessionReq{Type: req.Type, ProxyAuth: req.ProxyAuth})
+	if err != nil {
+		fail(c, 409, err.Error())
+		return
 	}
-	out := make([]result, req.Count)
-	const maxRetries = 3
-	for i := 0; i < req.Count; i++ {
-		if i > 0 {
-			time.Sleep(2 * time.Second)
-		}
-		sub := createSessionReq{Type: req.Type, ProxyAuth: req.ProxyAuth}
-		sess, _, err := createSessionAndDial(line, sub)
-		var full *lineFullError
-		if errors.As(err, &full) {
-			// Có session được tạo song song (API khác) → dừng, không vượt trần.
-			out = out[:i]
-			break
-		}
-		for retry := 1; retry <= maxRetries && err != nil && isPADITimeout(err.Error()) && sess != nil; retry++ {
-			log.Printf("[bulk-create] session %d PADI timeout, retry %d/%d", sess.Id, retry, maxRetries)
-			time.Sleep(time.Duration(3+retry*2) * time.Second)
-			if retryErr := pppoe.M.Dial(sess.Id); retryErr == nil {
-				err = nil
-				db.DB.First(&sess, sess.Id)
-			}
-		}
-		r := result{}
-		if sess != nil {
-			r.SessionId = sess.Id
-			r.Status = sess.Status
-		}
-		if err != nil {
-			r.Status = "error"
-			r.Error = truncateErr(err.Error(), 240)
-		}
-		out[i] = r
-	}
-	ok(c, out)
+	ok(c, j.snapshot())
 }
 
-func isPADITimeout(s string) bool {
-	low := strings.ToLower(s)
-	return strings.Contains(low, "no pado") || strings.Contains(low, "padi") || strings.Contains(low, "timeout")
+// GetLineBulkJob — trạng thái job tạo hàng loạt gần nhất của line.
+func GetLineBulkJob(c *gin.Context) {
+	lineID, _ := strconv.Atoi(c.Param("id"))
+	j := bulkJobOf(uint(lineID))
+	if j == nil {
+		ok(c, nil)
+		return
+	}
+	ok(c, j.snapshot())
 }
+
+// StopLineBulkJob — dừng job đang chạy (session đã tạo giữ nguyên).
+func StopLineBulkJob(c *gin.Context) {
+	lineID, _ := strconv.Atoi(c.Param("id"))
+	j := bulkJobOf(uint(lineID))
+	if j == nil {
+		fail(c, 404, "line không có job tạo hàng loạt")
+		return
+	}
+	j.cancel()
+	ok(c, j.snapshot())
+}
+
 
 // truncateErr — gọn error message dài (pppd verbose) + extract AuthNak hint.
 func truncateErr(s string, n int) string {

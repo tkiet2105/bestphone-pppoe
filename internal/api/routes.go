@@ -28,6 +28,8 @@ func RegisterRoutes(r *gin.Engine) {
 		g.POST("/lines/:id/delete", DeleteLine)
 		g.POST("/lines/:id/sessions", CreateLineSession)
 		g.POST("/lines/:id/sessions/bulk", CreateLineSessionsBulk)
+		g.GET("/lines/:id/sessions/bulk", GetLineBulkJob)
+		g.POST("/lines/:id/sessions/bulk/stop", StopLineBulkJob)
 
 		g.GET("/sessions", ListSessions)
 		g.GET("/sessions/:id", GetSession)

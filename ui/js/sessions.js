@@ -15,7 +15,19 @@ async function init() {
   await Promise.all([loadLines(), loadNics()]);
   if (initialLine) document.getElementById('filter-line').value = initialLine;
   await loadSessions();
-  Api.subscribeEvents((type) => {
+  await loadBulkJobs();
+  Api.subscribeEvents((type, data) => {
+    if (type === 'bulk.progress' && data) {
+      const prev = _bulkJobs[data.line_id];
+      _bulkJobs[data.line_id] = data;
+      renderBulkJobs();
+      if (prev && prev.status === 'running' && data.status !== 'running') {
+        const msg = `Line #${data.line_id}: xong ${data.ok}/${data.count} thành công, ${data.fail} lỗi` + (data.note ? ` — ${data.note}` : '');
+        (data.status === 'done' ? Toast.success : Toast.error)(msg);
+      }
+      scheduleLoadSessions();
+      return;
+    }
     if (['session.status', 'session.public_ip', 'session.rotate', 'session.auto_rotate_paused', 'session.reconnect_failed', 'session.reconnect_ok', 'proxy.started', 'proxy.stopped'].includes(type)) {
       scheduleLoadSessions();
     }
@@ -542,15 +554,11 @@ async function submitCreateSession() {
       const r = await Api.createSession(lineId, { proxy_auth: proxyAuth, type: sessType });
       Toast.success(`Đã tạo session ${r.session.id} (${r.session.status})`);
     } else {
-      Toast.info(`Đang tạo ${count} session...`);
-      const r = await Api.bulkCreateSessions(lineId, { count, proxy_auth: proxyAuth, type: sessType });
-      const ok = r.filter(x => x.status === 'connected').length;
-      const err = r.filter(x => x.status === 'error').length;
-      Toast.success(`Đã tạo: ${ok} thành công · ${err} lỗi / ${r.length}`);
-      if (err > 0) {
-        const errMsgs = [...new Set(r.filter(x => x.error).map(x => x.error))];
-        errMsgs.slice(0, 2).forEach(m => Toast.info('Lý do: ' + m));
-      }
+      const j = await Api.bulkCreateSessions(lineId, { count, proxy_auth: proxyAuth, type: sessType });
+      const mins = Math.ceil(count * (j.gap_seconds || 30) / 60);
+      Toast.success(`Đã bắt đầu tạo ${count} session chạy nền — cách ${j.gap_seconds}s/phiên, khoảng ${mins} phút`);
+      _bulkJobs[lineId] = j;
+      renderBulkJobs();
     }
     closeModal('create-sess-modal');
     loadSessions();
@@ -1192,4 +1200,51 @@ async function copyExport() {
   const ok = await copyText(text);
   if (ok) Toast.success('Copied ' + text.split('\n').filter(Boolean).length + ' dòng');
   else Toast.error('Browser từ chối copy');
+}
+
+
+// ─── Tạo hàng loạt chạy nền (API /lines/:id/sessions/bulk) ───
+// Server giãn cách mỗi phiên (Cài đặt → bulk_gap_seconds, mặc định 30s) và tự
+// thử lại phiên bị 169.254 / không PADO; tiến độ đẩy qua SSE 'bulk.progress'.
+let _bulkJobs = {}; // line_id → snapshot job
+
+async function loadBulkJobs() {
+  for (const l of _lines) {
+    try {
+      const j = await Api.getBulkJob(l.id);
+      if (j) _bulkJobs[l.id] = j;
+    } catch (_) {}
+  }
+  renderBulkJobs();
+}
+
+function renderBulkJobs() {
+  const el = document.getElementById('bulk-panel');
+  if (!el) return;
+  const rows = Object.values(_bulkJobs).filter(j => j && (j.status === 'running' ||
+    (j.finished_at && Date.now() - new Date(j.finished_at).getTime() < 30 * 60 * 1000)));
+  if (!rows.length) { el.style.display = 'none'; return; }
+  const lineName = (id) => { const l = _lines.find(x => x.id === id); return l ? l.name : ('#' + id); };
+  const label = { running: 'Đang chạy', done: 'Xong', stopped: 'Đã dừng', cancelled: 'Đã huỷ' };
+  el.style.display = '';
+  el.innerHTML = '<h2 style="margin:0 0 8px">Tạo session hàng loạt</h2>' + rows.map(j => {
+    const pct = j.count ? Math.round(j.done * 100 / j.count) : 0;
+    const left = j.status === 'running' ? ` · còn khoảng ${Math.ceil((j.count - j.done) * j.gap_seconds / 60)} phút` : '';
+    return `<div class="row" style="gap:12px;align-items:center;margin:6px 0">
+      <b style="min-width:120px">${escapeHTML(lineName(j.line_id))}</b>
+      <span class="badge">${label[j.status] || j.status}</span>
+      <span class="mono small">${j.done}/${j.count} (${pct}%) · ✓ ${j.ok} · ✗ ${j.fail} · thử lại ${j.retries} · cách ${j.gap_seconds}s${left}</span>
+      ${j.status === 'running' ? `<button class="secondary" onclick="stopBulk(${j.line_id})">Dừng</button>` : ''}
+    </div>` + (j.note ? `<div class="muted small">${escapeHTML(j.note)}</div>` : '') +
+      (j.last_error && j.status !== 'done' ? `<div class="muted small">Lỗi gần nhất: ${escapeHTML(j.last_error)}</div>` : '');
+  }).join('');
+}
+
+async function stopBulk(lineId) {
+  try {
+    const j = await Api.stopBulkJob(lineId);
+    _bulkJobs[lineId] = j;
+    renderBulkJobs();
+    Toast.info('Đã gửi lệnh dừng — session đã tạo vẫn giữ nguyên');
+  } catch (e) { Toast.error('Lỗi dừng: ' + e.message); }
 }

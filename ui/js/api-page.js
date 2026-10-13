@@ -60,7 +60,7 @@ const SPEC = [
       { method: 'GET',  path: '/api/v1/sessions/:id', desc: 'Chi tiết 1 phiên + thông tin proxy.' },
       { method: 'POST', path: '/api/v1/lines/:id/sessions', desc: 'Tạo 1 phiên — tài khoản ISP lấy từ đường truyền, MAC tự sinh nếu line.use_macvlan. proxy_auth điều khiển cách khách hàng đăng nhập proxy (SOCKS5/HTTP).',
         body: '{ "proxy_auth": { "mode": "random" } }   // hoặc {"mode":"manual","username":"X","password":"Y"} hoặc {"mode":"none"} (proxy mở)' },
-      { method: 'POST', path: '/api/v1/lines/:id/sessions/bulk', desc: 'Tạo N phiên cùng lúc, song song (1..50). Mỗi phiên dùng tài khoản ISP + MAC ngẫu nhiên riêng. proxy_auth dùng chung.',
+      { method: 'POST', path: '/api/v1/lines/:id/sessions/bulk', desc: 'Tạo N phiên CHẠY NỀN (N ≤ chỗ trống của line), cách nhau bulk_gap_seconds (mặc định 30s), tự thử lại phiên bị BRAS chặn. Trả trạng thái job; GET cùng đường dẫn để xem tiến độ, POST …/bulk/stop để dừng.',
         body: '{ "count": 10, "proxy_auth": { "mode": "random" } }' },
       { method: 'POST', path: '/api/v1/sessions/:id/delete', desc: 'Ngắt pppd + xóa file cấu hình peer + xóa proxy + xóa phiên.' },
       { method: 'POST', path: '/api/v1/sessions/:id/rotate', desc: 'Đổi IP — ngắt → chờ 3 giây cho BRAS giải phóng → quay số lại. Trả về IP cũ + IP mới.',

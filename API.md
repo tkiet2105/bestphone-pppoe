@@ -364,7 +364,12 @@ Tạo 1 session.
 
 ### POST /api/v1/lines/:id/sessions/bulk
 
-Tạo N session tuần tự (2s/lần) + 3 retry trên PADI timeout.
+Tạo N session **chạy nền**, giãn cách và tự thử lại (BRAS FPT cấp IP 169.254 khi quay dồn dập: 2–3s/phiên bị chặn, ~30s/phiên lên đủ 100).
+
+- Giãn cách giữa 2 phiên = setting `bulk_gap_seconds` (mặc định 30, 5..600). Phiên bị chặn (169.254/CGNAT/không PADO) → giãn cách tự gấp đôi (tối đa 600s); phiên thành công → về mức gốc.
+- Phiên lỗi do BRAS (169.254, không PADO/PADS, iface không lên, LCP terminated) được thử lại tối đa `bulk_retry_max` lần (mặc định 3), chờ `bulk_retry_wait_seconds` (mặc định 60) rồi gấp đôi mỗi lần. **Không** thử lại AuthNak.
+- 5 phiên liên tiếp vẫn lỗi sau khi thử lại → job dừng (`status=stopped`) để BRAS không đá phiên đang có của khách.
+- Mỗi line chỉ 1 job chạy cùng lúc (job thứ 2 → `409`). Tiến độ đẩy qua SSE `bulk.progress`.
 
 **Body**:
 ```json
@@ -377,13 +382,22 @@ Tạo N session tuần tự (2s/lần) + 3 retry trên PADI timeout.
 | type | string | optional | `static` \| `private` \| `rotating` (default `rotating`); áp dụng cho mọi session tạo ra |
 | proxy_auth | object | optional | dùng chung cho mọi session |
 
-**Success 200** `data`:
+**Success 200** `data` = trạng thái job (trả ngay, job chạy nền):
 ```json
-[
-  { "session_id": 100, "status": "connected" },
-  { "session_id": 101, "status": "error", "error": "PADI timeout" }
-]
+{ "line_id": 2, "count": 70, "done": 0, "ok": 0, "fail": 0, "retries": 0, "gap_seconds": 30,
+  "status": "running", "note": "", "last_error": "", "session_ids": [], "started_at": "…", "finished_at": null }
 ```
+`status`: `running` | `done` | `stopped` (line đủ / lỗi không thử lại được / BRAS chặn liên tục) | `cancelled`.
+
+**Errors**: `409` line đang có job chạy.
+
+### GET /api/v1/lines/:id/sessions/bulk
+
+Trạng thái job gần nhất của line (`data` = null nếu chưa có).
+
+### POST /api/v1/lines/:id/sessions/bulk/stop
+
+Dừng job đang chạy; session đã tạo giữ nguyên.
 
 ---
 

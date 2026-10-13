@@ -51,6 +51,9 @@ func SeedDefaultSettings() {
 		"reconnect_enabled":       "true",
 		"reconnect_max_retries":   "1",
 		"reconnect_pause_minutes": "60",
+		"bulk_gap_seconds":        "30", // tạo hàng loạt: giãn cách giữa 2 phiên (BRAS chặn khi quay dày)
+		"bulk_retry_max":          "3",
+		"bulk_retry_wait_seconds": "60",
 	}
 	for k, v := range defaults {
 		var count int64
