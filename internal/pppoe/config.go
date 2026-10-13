@@ -2,17 +2,22 @@ package pppoe
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 
+	"gorm.io/gorm"
+
 	"github.com/tkiet2105/bestphone-pppoe/internal/models"
 )
 
-const (
-	peerDir         = "/etc/ppp/peers"
+const peerDir = "/etc/ppp/peers"
+
+// var (không const) để test trỏ sang thư mục tạm.
+var (
 	chapSecretsFile = "/etc/ppp/chap-secrets"
 	papSecretsFile  = "/etc/ppp/pap-secrets"
 )
@@ -125,8 +130,44 @@ func removeSecret(path, username string) {
 	_ = os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o600)
 }
 
-// RemoveSessionSecrets — gọi khi delete session (chỉ nếu không session khác cùng username).
-func RemoveSessionSecrets(username string) {
+// RemoveSessionSecrets — gỡ dòng secret của username khỏi chap/pap-secrets,
+// CHỈ KHI không còn line hay session nào dùng username đó.
+//
+// ⚠ Gọi SAU khi đã xoá session/line khỏi DB. Mọi session của 1 line dùng CHUNG
+// tài khoản PPPoE của line → bản cũ gỡ vô điều kiện: xoá 1 session là mất secret
+// của cả line, pppd `persist` của các session còn lại khi rớt tự quay lại sẽ
+// AuthNak mãi (proxy5 10/10/2026: 2/2 line mất secret, 1899 AuthNak/48h).
+func RemoveSessionSecrets(db *gorm.DB, username string) {
+	if username == "" {
+		return
+	}
+	var n int64
+	db.Model(&models.Session{}).Where("username = ?", username).Count(&n)
+	if n > 0 {
+		return
+	}
+	db.Model(&models.Line{}).Where("username = ?", username).Count(&n)
+	if n > 0 {
+		return
+	}
 	removeSecret(chapSecretsFile, username)
 	removeSecret(papSecretsFile, username)
+}
+
+// EnsureSecrets — ghi lại secret cho mọi tài khoản đang được session dùng
+// (idempotent). Gọi lúc boot để tự lành secret đã bị bản cũ xoá nhầm, trước khi
+// pppd `persist` cần quay lại.
+func EnsureSecrets(db *gorm.DB) {
+	type cred struct{ Username, Password string }
+	var creds []cred
+	db.Model(&models.Session{}).Distinct("username", "password").
+		Where("username != '' AND password != ''").Find(&creds)
+	for _, c := range creds {
+		if err := upsertSecret(chapSecretsFile, c.Username, c.Password); err != nil {
+			log.Printf("[secrets] chap upsert %s: %v", c.Username, err)
+		}
+		if err := upsertSecret(papSecretsFile, c.Username, c.Password); err != nil {
+			log.Printf("[secrets] pap upsert %s: %v", c.Username, err)
+		}
+	}
 }

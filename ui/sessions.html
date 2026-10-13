@@ -7,6 +7,8 @@
 </head>
 <body>
   <main>
+    <!-- Tiến độ tạo hàng loạt (chạy nền) — sessions.js renderBulkJobs -->
+    <div class="card" id="bulk-panel" style="display:none"></div>
     <!-- NIC status panel -->
     <div class="card" id="nic-panel">
       <div class="row" style="margin-bottom:8px">
@@ -66,8 +68,8 @@
         <div class="muted small" id="sm-line-info" style="margin-top:4px"></div>
       </div>
       <div class="form-row"><label>Số lượng session cần tạo</label>
-        <input type="number" id="sm-count" value="1" min="1" max="50">
-        <div class="muted small" style="margin-top:4px">Tối đa 50. Tất cả đều dùng tài khoản ISP của line, mỗi cái 1 IP riêng.</div>
+        <input type="number" id="sm-count" value="1" min="1">
+        <div class="muted small" style="margin-top:4px">Tối đa = số chỗ còn trống của line (max_sessions − số session đang có). Nhiều hơn 1 thì chạy NỀN, mỗi phiên cách nhau theo Cài đặt (mặc định 30 giây — BRAS chặn khi quay dồn dập) và tự thử lại phiên bị IP 169.254 / không PADO.</div>
       </div>
       <div class="form-row"><label>Loại proxy (type)</label>
         <select id="sm-type">

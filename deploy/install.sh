@@ -92,6 +92,7 @@ ADMIN_TOKEN=$TOKEN
 ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
 ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
 DIAL_CONCURRENT=5
+# PPP_UNIT_MAX=2048   # số ppp unit tối đa CẢ server (mọi line dùng chung)
 # BESTPHONE_PPPOE_ROTATE_REQUIRE_NEW_IP=1   # uncomment để rotate đòi đổi IP
 EOF
   chmod 0600 /etc/default/bestphone-pppoe

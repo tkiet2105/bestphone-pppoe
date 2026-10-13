@@ -82,6 +82,8 @@ const Api = (() => {
     getSession: (id) => _req('GET', `/sessions/${id}`),
     createSession: (lineId, data) => _req('POST', `/lines/${lineId}/sessions`, data),
     bulkCreateSessions: (lineId, data) => _req('POST', `/lines/${lineId}/sessions/bulk`, data),
+    getBulkJob: (lineId) => _req('GET', `/lines/${lineId}/sessions/bulk`),
+    stopBulkJob: (lineId) => _req('POST', `/lines/${lineId}/sessions/bulk/stop`),
     deleteSession: (id) => _req('POST', `/sessions/${id}/delete`),
     rotateSession: (id) => _req('POST', `/sessions/${id}/rotate`),
     setSessionEnabled: (id, enabled) => _req('POST', `/sessions/${id}/enabled`, { enabled }),
@@ -133,7 +135,7 @@ const Api = (() => {
     subscribeEvents: (onEvent) => {
       const es = new EventSource(BASE + '/events?token=' + encodeURIComponent(getToken()));
       es.addEventListener('hello', e => onEvent('hello', JSON.parse(e.data)));
-      ['session.status', 'session.public_ip', 'session.rotate', 'session.auto_rotate_paused', 'proxy.cred_changed', 'proxy.started', 'proxy.stopped'].forEach(t => {
+      ['session.status', 'session.public_ip', 'session.rotate', 'session.auto_rotate_paused', 'proxy.cred_changed', 'proxy.started', 'proxy.stopped', 'bulk.progress'].forEach(t => {
         es.addEventListener(t, e => onEvent(t, JSON.parse(e.data)));
       });
       return es;

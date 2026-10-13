@@ -8,6 +8,10 @@ Type=simple
 EnvironmentFile=/etc/default/bestphone-pppoe
 ExecStart=/usr/local/bin/bestphone-pppoe
 Restart=on-failure
+# pppd (updetach) nằm trong cgroup của service. KillMode mặc định control-group
+# → mỗi restart/auto-update giết SẠCH pppd: mọi khách rớt + proxy tĩnh đổi IP.
+# process: chỉ dừng tiến trình Go; RestoreState() nhận lại các ppp đang UP.
+KillMode=process
 RestartSec=3s
 User=root
 AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_NET_BIND_SERVICE

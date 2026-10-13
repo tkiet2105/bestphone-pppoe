@@ -34,6 +34,15 @@ git "${GIT_ARGS[@]}" pull origin main
 export PATH=$PATH:/usr/local/go/bin
 CGO_ENABLED=0 go build -o /usr/local/bin/bestphone-pppoe ./cmd/bestphone-pppoe
 
+# Đồng bộ unit systemd TRƯỚC restart (vd KillMode=process giữ pppd sống qua
+# restart). ⚠ Script đang chạy là bản CŨ đã cài ở /usr/local/bin (install.sh
+# chép vào) → đoạn này chỉ chạy khi bản cài đã có nó.
+if ! cmp -s deploy/systemd/bestphone-pppoe.service /etc/systemd/system/bestphone-pppoe.service; then
+  install -m 0644 deploy/systemd/bestphone-pppoe.service /etc/systemd/system/
+  systemctl daemon-reload
+  echo "[update] systemd unit synced"
+fi
+
 systemctl restart bestphone-pppoe
 sleep 2
 if systemctl is-active --quiet bestphone-pppoe; then

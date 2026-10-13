@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/tkiet2105/bestphone-pppoe/internal/db"
@@ -314,5 +315,62 @@ func TestSetSessionTypeBatch_MixedResults(t *testing.T) {
 	}
 	if results[2].Updated || results[2].Error == "" {
 		t.Errorf("session 9999 should fail not-found")
+	}
+}
+
+// Trần session của line = đúng max_sessions admin đặt: line đủ → 400, không dial.
+func TestCreateLineSession_LineFull(t *testing.T) {
+	rk := setupSessionRouter(t)
+	rk.R.POST("/api/v1/lines/:id/sessions", BearerAuth(), CreateLineSession)
+	rk.R.POST("/api/v1/lines/:id/sessions/bulk", BearerAuth(), CreateLineSessionsBulk)
+
+	line := testutil.SeedLine(t) // MaxSessions = 8
+	seedSessionsUnits(t, line.Id, line.MaxSessions)
+
+	w := testutil.DoJSON(t, rk.R, "POST", fmt.Sprintf("/api/v1/lines/%d/sessions", line.Id), map[string]any{}, rk.Tok)
+	if w.Code != 400 {
+		t.Fatalf("single: expected 400 line full, got %d: %s", w.Code, w.Body.String())
+	}
+	w = testutil.DoJSON(t, rk.R, "POST", fmt.Sprintf("/api/v1/lines/%d/sessions/bulk", line.Id), map[string]any{"count": 1}, rk.Tok)
+	if w.Code != 400 {
+		t.Fatalf("bulk: expected 400 line full, got %d: %s", w.Code, w.Body.String())
+	}
+	var n int64
+	db.DB.Model(&models.Session{}).Where("line_id = ?", line.Id).Count(&n)
+	if n != int64(line.MaxSessions) {
+		t.Fatalf("expected %d sessions, got %d", line.MaxSessions, n)
+	}
+}
+
+// Bulk: count vượt số chỗ còn trống → 400 nêu rõ số chỗ; không còn trần cố định 50.
+func TestCreateLineSessionsBulk_RoomFromMaxSessions(t *testing.T) {
+	rk := setupSessionRouter(t)
+	rk.R.POST("/api/v1/lines/:id/sessions/bulk", BearerAuth(), CreateLineSessionsBulk)
+
+	line := testutil.SeedLine(t)
+	db.DB.Model(&line).Update("max_sessions", 100)
+	seedSessionsUnits(t, line.Id, 30)
+	w := testutil.DoJSON(t, rk.R, "POST", fmt.Sprintf("/api/v1/lines/%d/sessions/bulk", line.Id), map[string]any{"count": 71}, rk.Tok)
+	if w.Code != 400 {
+		t.Fatalf("count 71 > room 70: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	resp := testutil.ParseResponse(t, w)
+	if !strings.Contains(resp.Error, "còn 70 chỗ") {
+		t.Fatalf("expected message nêu 'còn 70 chỗ', got %q", resp.Error)
+	}
+	w = testutil.DoJSON(t, rk.R, "POST", fmt.Sprintf("/api/v1/lines/%d/sessions/bulk", line.Id), map[string]any{"count": 0}, rk.Tok)
+	if w.Code != 400 {
+		t.Fatalf("count 0: expected 400, got %d", w.Code)
+	}
+}
+
+// seedSessionsUnits — n session của line, mỗi cái 1 ppp_unit riêng (cột UNIQUE).
+func seedSessionsUnits(t *testing.T, lineID uint, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		s := models.Session{LineId: lineID, PppUnit: i, Username: "isp_user", Password: "isp_pass", Status: "connected"}
+		if err := db.DB.Create(&s).Error; err != nil {
+			t.Fatalf("seed session: %v", err)
+		}
 	}
 }

@@ -27,6 +27,22 @@
           <input type="number" id="cfg-reconnect-pause-minutes" min="1" max="1440">
           <div class="muted small">Sau mỗi lần fail, chờ khoảng thời gian này trước khi thử lại. Tối đa 1440 phút (24 giờ).</div>
         </div>
+        <h3 style="margin-top:20px">Tạo session hàng loạt</h3>
+        <div class="form-row">
+          <label>Giãn cách giữa 2 phiên (giây)</label>
+          <input type="number" id="cfg-bulk-gap-seconds" min="5" max="600">
+          <div class="muted small">BRAS FPT cấp IP 169.254 khi quay số dồn dập (đo được: 2–3 giây/phiên bị chặn, 30 giây/phiên lên đủ 100). Bị chặn thì server tự gấp đôi, tối đa 600 giây.</div>
+        </div>
+        <div class="form-row">
+          <label>Số lần thử lại mỗi phiên</label>
+          <input type="number" id="cfg-bulk-retry-max" min="0" max="10">
+          <div class="muted small">Chỉ thử lại lỗi do BRAS chặn (IP 169.254, không PADO…). Không thử lại AuthNak (sai mật khẩu).</div>
+        </div>
+        <div class="form-row">
+          <label>Chờ trước lần thử lại đầu (giây)</label>
+          <input type="number" id="cfg-bulk-retry-wait-seconds" min="10" max="1800">
+          <div class="muted small">Mỗi lần thử sau chờ gấp đôi.</div>
+        </div>
         <div class="actions">
           <button onclick="saveSettings()">Lưu cấu hình</button>
         </div>

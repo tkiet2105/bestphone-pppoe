@@ -3,12 +3,16 @@ package server
 import (
 	"context"
 	cryptorand "crypto/rand"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
 	"net"
+	"os"
 	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"gorm.io/gorm"
@@ -65,14 +69,24 @@ func (m *Manager) AllocPort() (int, error) {
 			free = append(free, p)
 		}
 	}
-	if len(free) == 0 {
-		return 0, fmt.Errorf("no free port in [%d,%d]", m.portMin, m.portMax)
+	// Port trống trong DB vẫn có thể đang bị socket khác giữ (listener cũ chưa
+	// đóng, hoặc cổng outbound ephemeral nằm trong dải) → thử bind trước khi chọn,
+	// tránh session connected mà proxy "bind: address already in use".
+	for tries := 0; len(free) > 0 && tries < 64; tries++ {
+		idx, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(len(free))))
+		if err != nil {
+			return 0, fmt.Errorf("rand pick: %w", err)
+		}
+		i := int(idx.Int64())
+		port := free[i]
+		if ln, err := net.Listen("tcp", net.JoinHostPort("0.0.0.0", strconv.Itoa(port))); err == nil {
+			_ = ln.Close()
+			return port, nil
+		}
+		free[i] = free[len(free)-1]
+		free = free[:len(free)-1]
 	}
-	idx, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(len(free))))
-	if err != nil {
-		return 0, fmt.Errorf("rand pick: %w", err)
-	}
-	return free[idx.Int64()], nil
+	return 0, fmt.Errorf("server hết cổng proxy trống trong [%d,%d] — nới PROXY_PORT_MIN/MAX", m.portMin, m.portMax)
 }
 
 // Start — load proxy + session, bind net.Listen, spawn acceptLoop. Idempotent.
@@ -98,6 +112,19 @@ func (m *Manager) Start(proxyID uint) error {
 	}
 
 	ln, err := net.Listen("tcp", net.JoinHostPort("0.0.0.0", strconv.Itoa(p.Port)))
+	if err != nil && errors.Is(err, syscall.EADDRINUSE) && !m.hasClaimCreds(p.Id) {
+		// Cổng bị kết nối khác chiếm (thường là cổng tạm outbound — dải tạm của
+		// Linux 32768–60999 chồng dải proxy). Proxy CHƯA có cred khách → đổi cổng
+		// được. Proxy ĐÃ có khách thì giữ cổng (Central đã lưu), báo lỗi để thử lại.
+		if port, aerr := m.AllocPort(); aerr == nil {
+			if ln2, lerr := net.Listen("tcp", net.JoinHostPort("0.0.0.0", strconv.Itoa(port))); lerr == nil {
+				log.Printf("[proxysrv] proxy %d: cổng %d bị chiếm, đổi sang %d", p.Id, p.Port, port)
+				p.Port = port
+				m.db.Model(&models.Proxy{}).Where("id = ?", p.Id).Update("port", port)
+				ln, err = ln2, nil
+			}
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("listen :%d: %w", p.Port, err)
 	}
@@ -174,11 +201,76 @@ func (m *Manager) RestoreAll() {
 	m.LoadGlobalRules()
 	var proxies []models.Proxy
 	m.db.Where("status = ?", "running").Find(&proxies)
+	var busy []uint
 	for _, p := range proxies {
 		if err := m.Start(p.Id); err != nil {
 			log.Printf("[proxysrv] restore proxy %d failed: %v", p.Id, err)
+			if errors.Is(err, syscall.EADDRINUSE) {
+				busy = append(busy, p.Id)
+			}
 		}
 	}
+	// Proxy của khách mà cổng đang bị kết nối tạm chiếm: kết nối đó sẽ đóng
+	// (TIME-WAIT ~60s) → thử lại nền tới 15 phút thay vì để proxy chết lặng lẽ
+	// trong khi DB vẫn ghi running.
+	if len(busy) > 0 {
+		go m.retryStart(busy, 30*time.Second, 30)
+	}
+}
+
+func (m *Manager) retryStart(ids []uint, every time.Duration, times int) {
+	for i := 0; i < times && len(ids) > 0; i++ {
+		select {
+		case <-m.rootCtx.Done():
+			return
+		case <-time.After(every):
+		}
+		left := ids[:0]
+		for _, id := range ids {
+			if err := m.Start(id); err != nil {
+				left = append(left, id)
+			} else {
+				log.Printf("[proxysrv] proxy %d lên lại sau khi cổng được nhả", id)
+			}
+		}
+		ids = left
+	}
+	for _, id := range ids {
+		log.Printf("[proxysrv] ⚠ proxy %d vẫn không bind được cổng sau 15 phút", id)
+	}
+}
+
+// hasClaimCreds — proxy đang có cred khách (claim) → không được tự đổi cổng.
+func (m *Manager) hasClaimCreds(proxyID uint) bool {
+	var n int64
+	m.db.Model(&models.ProxyCredential{}).Where("proxy_id = ? AND i_user_id != ''", proxyID).Count(&n)
+	return n > 0
+}
+
+// ReserveProxyPorts — đưa dải cổng proxy vào net.ipv4.ip_local_reserved_ports để
+// kernel KHÔNG cấp chúng làm cổng tạm cho kết nối outbound (dải tạm mặc định
+// 32768–60999 chồng 30000–40000; proxy5 10/10/2026 có 648 kết nối ra ngoài nằm
+// trong dải proxy → listener "address already in use"). Giữ nguyên giá trị cũ.
+func ReserveProxyPorts(portMin, portMax int) {
+	const path = "/proc/sys/net/ipv4/ip_local_reserved_ports"
+	cur, err := os.ReadFile(path)
+	if err != nil {
+		log.Printf("[proxysrv] không đọc được %s: %v", path, err)
+		return
+	}
+	rng := fmt.Sprintf("%d-%d", portMin, portMax)
+	val := strings.TrimSpace(string(cur))
+	if strings.Contains(","+val+",", ","+rng+",") {
+		return
+	}
+	if val != "" {
+		val += ","
+	}
+	if err := os.WriteFile(path, []byte(val+rng), 0o644); err != nil {
+		log.Printf("[proxysrv] ⚠ không đặt được ip_local_reserved_ports=%s: %v", rng, err)
+		return
+	}
+	log.Printf("[proxysrv] ip_local_reserved_ports += %s", rng)
 }
 
 func (m *Manager) StartCredCleanup(ctx context.Context) {

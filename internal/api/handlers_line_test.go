@@ -15,7 +15,7 @@ func TestCreateLine_Success(t *testing.T) {
 	tok := testutil.SeedToken(t)
 	r.POST("/api/v1/lines", BearerAuth(), CreateLine)
 
-	body := map[string]any{"name": "Line1", "iface": "eth0", "username": "isp", "password": "pass"}
+	body := map[string]any{"name": "Line1", "iface": "eth0", "username": "isp", "password": "pass", "max_sessions": 100}
 	w := testutil.DoJSON(t, r, "POST", "/api/v1/lines", body, tok)
 	if w.Code != 200 {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
@@ -46,18 +46,69 @@ func TestCreateLine_MissingName(t *testing.T) {
 	}
 }
 
-func TestCreateLine_DefaultMaxSessions(t *testing.T) {
+// max_sessions = đúng số admin đặt: thiếu/≤0 → 400 (không tự ép mặc định).
+func TestCreateLine_MaxSessionsRequired(t *testing.T) {
 	r := setupRouter(t)
 	tok := testutil.SeedToken(t)
 	r.POST("/api/v1/lines", BearerAuth(), CreateLine)
 
-	body := map[string]any{"name": "L2", "iface": "eth1"}
-	w := testutil.DoJSON(t, r, "POST", "/api/v1/lines", body, tok)
-	var line models.Line
-	resp := testutil.ParseResponse(t, w)
-	json.Unmarshal(resp.Data, &line)
-	if line.MaxSessions != 8 {
-		t.Fatalf("expected default max_sessions=8, got %d", line.MaxSessions)
+	for _, body := range []map[string]any{
+		{"name": "L2", "iface": "eth1"},
+		{"name": "L2", "iface": "eth1", "max_sessions": 0},
+		{"name": "L2", "iface": "eth1", "max_sessions": -5},
+	} {
+		w := testutil.DoJSON(t, r, "POST", "/api/v1/lines", body, tok)
+		if w.Code != 400 {
+			t.Fatalf("body %v: expected 400, got %d: %s", body, w.Code, w.Body.String())
+		}
+	}
+	var n int64
+	db.DB.Model(&models.Line{}).Count(&n)
+	if n != 0 {
+		t.Fatalf("expected no line created, got %d", n)
+	}
+}
+
+// Không cắt trần: 100, 250 lưu nguyên.
+func TestCreateLine_MaxSessionsNoClamp(t *testing.T) {
+	r := setupRouter(t)
+	tok := testutil.SeedToken(t)
+	r.POST("/api/v1/lines", BearerAuth(), CreateLine)
+
+	for _, want := range []int{100, 250} {
+		body := map[string]any{"name": fmt.Sprintf("L%d", want), "iface": "eth1", "max_sessions": want}
+		w := testutil.DoJSON(t, r, "POST", "/api/v1/lines", body, tok)
+		if w.Code != 200 {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var line models.Line
+		json.Unmarshal(testutil.ParseResponse(t, w).Data, &line)
+		var stored models.Line
+		db.DB.First(&stored, line.Id)
+		if line.MaxSessions != want || stored.MaxSessions != want {
+			t.Fatalf("expected max_sessions=%d, got resp=%d db=%d", want, line.MaxSessions, stored.MaxSessions)
+		}
+	}
+}
+
+func TestUpdateLine_MaxSessions(t *testing.T) {
+	r := setupRouter(t)
+	tok := testutil.SeedToken(t)
+	r.PUT("/api/v1/lines/:id", BearerAuth(), UpdateLine)
+	line := testutil.SeedLine(t)
+
+	w := testutil.DoJSON(t, r, "PUT", "/api/v1/lines/"+uid(line.Id), map[string]any{"max_sessions": 0}, tok)
+	if w.Code != 400 {
+		t.Fatalf("max_sessions=0: expected 400, got %d", w.Code)
+	}
+	w = testutil.DoJSON(t, r, "PUT", "/api/v1/lines/"+uid(line.Id), map[string]any{"max_sessions": 100}, tok)
+	if w.Code != 200 {
+		t.Fatalf("max_sessions=100: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var stored models.Line
+	db.DB.First(&stored, line.Id)
+	if stored.MaxSessions != 100 {
+		t.Fatalf("expected 100, got %d", stored.MaxSessions)
 	}
 }
 
@@ -163,7 +214,7 @@ func TestCreateLine_WithCustomMacs(t *testing.T) {
 	r.POST("/api/v1/lines", BearerAuth(), CreateLine)
 
 	body := map[string]any{
-		"name": "L-mac", "iface": "eth-mac",
+		"name": "L-mac", "iface": "eth-mac", "max_sessions": 8,
 		"custom_macs": "AA:BB:CC:DD:EE:01\naa:bb:cc:dd:ee:02\naa:bb:cc:dd:ee:01\n", // có duplicate + uppercase
 	}
 	w := testutil.DoJSON(t, r, "POST", "/api/v1/lines", body, tok)
@@ -192,7 +243,7 @@ func TestCreateLine_InvalidMacFormat(t *testing.T) {
 	r.POST("/api/v1/lines", BearerAuth(), CreateLine)
 
 	body := map[string]any{
-		"name": "L-bad", "iface": "eth-bad",
+		"name": "L-bad", "iface": "eth-bad", "max_sessions": 8,
 		"custom_macs": "not-a-mac",
 	}
 	w := testutil.DoJSON(t, r, "POST", "/api/v1/lines", body, tok)

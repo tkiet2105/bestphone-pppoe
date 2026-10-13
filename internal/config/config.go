@@ -17,6 +17,7 @@ type Config struct {
 	AdminPassword  string // seed admin password — env ADMIN_PASSWORD (default "bestphone")
 	DialConcurrent int    // global cap dial pppoe đồng thời
 	RotateNewIP    bool   // BESTPHONE_PPPOE_ROTATE_REQUIRE_NEW_IP=1
+	PppUnitMax     int    // số ppp unit tối đa cả server (mọi line dùng chung) — env PPP_UNIT_MAX
 }
 
 func Load() *Config {
@@ -30,6 +31,10 @@ func Load() *Config {
 		AdminPassword:  os.Getenv("ADMIN_PASSWORD"), // KHÔNG trim — pass có thể chứa space
 		DialConcurrent: envInt("DIAL_CONCURRENT", 5),
 		RotateNewIP:    os.Getenv("BESTPHONE_PPPOE_ROTATE_REQUIRE_NEW_IP") == "1",
+		PppUnitMax:     envInt("PPP_UNIT_MAX", 2048),
+	}
+	if c.PppUnitMax <= 0 {
+		c.PppUnitMax = 2048
 	}
 	if c.ProxyPortMax < c.ProxyPortMin {
 		c.ProxyPortMax = c.ProxyPortMin + 1000

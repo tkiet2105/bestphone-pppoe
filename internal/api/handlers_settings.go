@@ -41,6 +41,9 @@ func UpdateSettings(c *gin.Context) {
 			}
 			return nil
 		},
+		"bulk_gap_seconds":        intRange("bulk_gap_seconds", 5, 600),
+		"bulk_retry_max":          intRange("bulk_retry_max", 0, 10),
+		"bulk_retry_wait_seconds": intRange("bulk_retry_wait_seconds", 10, 1800),
 	}
 
 	for k, v := range body {
@@ -67,4 +70,14 @@ func UpdateSettings(c *gin.Context) {
 	}
 
 	ok(c, db.AllSettings())
+}
+
+func intRange(key string, min, max int) func(string) error {
+	return func(v string) error {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < min || n > max {
+			return fmt.Errorf("%s phải là số %d-%d", key, min, max)
+		}
+		return nil
+	}
 }

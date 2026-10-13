@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -73,6 +75,22 @@ func (m *Manager) Dial(sessionID uint) error {
 	m.dialSem <- struct{}{}
 	defer func() { <-m.dialSem }()
 
+	peerName := fmt.Sprintf("bp-sess-%d", sess.Id)
+	// Chống pppd TRÙNG: peer có `persist` nên pppd cũ (nếu còn) vẫn tự quay lại.
+	// Bản cũ chạy thêm pppd mới bên cạnh → 2 pppd/session, mỗi cái giữ 1 phiên
+	// PPPoE trên tài khoản và 1 ppp unit (proxy5 10/10/2026: 4 session ×2 pppd).
+	m.hangupPeer(peerName)
+	// Chống ppp unit CHÉO: pppd khác (trùng/mồ côi) đang giữ ppp<unit> thì pppd
+	// của ta bị "Couldn't allocate PPP unit" và tự lấy unit khác, trong khi mã lại
+	// coi ppp<unit> (của người khác) là của session này.
+	if err := m.ensureFreeUnit(&sess); err != nil {
+		m.setStatus(&sess, models.StatusError, err.Error())
+		activity.Error(activity.CategoryDial, "ppp_unit_fail",
+			fmt.Sprintf("Session #%d: %s", sess.Id, err.Error()),
+			activity.SessionId(sess.Id), activity.LineId(line.Id), activity.F("error", err.Error()))
+		return err
+	}
+
 	m.setStatus(&sess, models.StatusDialing, "")
 
 	activity.Info(activity.CategoryDial, "start",
@@ -98,7 +116,6 @@ func (m *Manager) Dial(sessionID uint) error {
 		return err
 	}
 
-	peerName := fmt.Sprintf("bp-sess-%d", sess.Id)
 	// pppd updetach → process tự detach sau khi link UP. Timeout chặt bởi exec.
 	ctx, cancel := context.WithTimeout(context.Background(), m.dialTimeout)
 	defer cancel()
@@ -108,12 +125,12 @@ func (m *Manager) Dial(sessionID uint) error {
 		if errMsg == "" {
 			errMsg = err.Error()
 		}
-		shortMsg := classifyPppdError(errMsg)
+		shortMsg := classifyPppdError(errMsg + "\n" + err.Error())
 		m.setStatus(&sess, models.StatusError, shortMsg)
 		activity.Error(activity.CategoryDial, "pppd_fail",
 			fmt.Sprintf("pppd thất bại session #%d: %s", sess.Id, shortMsg),
 			activity.SessionId(sess.Id), activity.LineId(line.Id),
-			activity.F("reason", shortMsg), activity.F("pppd_output", truncateStr(errMsg, 500)))
+			activity.F("reason", shortMsg), activity.F("pppd_output", headTail(errMsg, 200, 800)))
 		return fmt.Errorf("pppd: %s", shortMsg)
 	}
 
@@ -133,6 +150,16 @@ func (m *Manager) Dial(sessionID uint) error {
 		activity.Error(activity.CategoryDial, "iface_not_up",
 			fmt.Sprintf("Session #%d: interface %s không UP sau 15s", sess.Id, ifaceName),
 			activity.SessionId(sess.Id), activity.LineId(line.Id), activity.F("iface", ifaceName))
+		return fmt.Errorf("%s", errMsg)
+	}
+	// ppp<unit> UP nhưng phải đúng là pppd CỦA session này (chặn race giành unit).
+	if owner := unitOwner(sess.PppUnit); owner != "" && owner != peerName {
+		m.hangupPeer(peerName)
+		errMsg := fmt.Sprintf("ppp unit lệch: %s đang thuộc %s", ifaceName, owner)
+		m.setStatus(&sess, models.StatusError, errMsg)
+		activity.Error(activity.CategoryDial, "ppp_unit_mismatch",
+			fmt.Sprintf("Session #%d: %s", sess.Id, errMsg),
+			activity.SessionId(sess.Id), activity.LineId(line.Id), activity.F("iface", ifaceName), activity.F("owner", owner))
 		return fmt.Errorf("%s", errMsg)
 	}
 
@@ -225,9 +252,69 @@ func (m *Manager) Hangup(sessionID uint) error {
 }
 
 func (m *Manager) hangupPeer(peerName string) {
-	_ = exec.Command("pkill", "-TERM", "-f", "pppd call "+peerName).Run()
+	// Neo cuối tên peer: pkill -f khớp CHUỖI CON, "pppd call bp-sess-7" từng khớp
+	// cả bp-sess-70..79, 700..799 → ngắt 1 session giết pppd của session khác.
+	pat := peerPattern(peerName)
+	_ = exec.Command("pkill", "-TERM", "-f", pat).Run()
 	time.Sleep(800 * time.Millisecond)
-	_ = exec.Command("pkill", "-KILL", "-f", "pppd call "+peerName).Run()
+	_ = exec.Command("pkill", "-KILL", "-f", pat).Run()
+}
+
+// peerPattern — regex (ERE của pkill) khớp ĐÚNG peer, không khớp peer có tiền tố trùng.
+func peerPattern(peerName string) string {
+	return "pppd call " + peerName + "( |$)"
+}
+
+// ensureFreeUnit — gọi trong Dial SAU khi đã hangup pppd của chính session.
+// Nếu ppp<unit> vẫn còn trong kernel thì unit đang bị tiến trình khác giữ →
+// cấp unit mới (trống cả trong DB lẫn kernel) cho session.
+func (m *Manager) ensureFreeUnit(sess *models.Session) error {
+	if !ifaceExists(fmt.Sprintf("ppp%d", sess.PppUnit)) {
+		return nil
+	}
+	AllocMu.Lock()
+	defer AllocMu.Unlock()
+	u, err := AllocPppUnit(m.db)
+	if err != nil {
+		return err
+	}
+	old := sess.PppUnit
+	// Policy-routing table theo unit cũ là của session này (áp ở lần dial trước).
+	RemoveReplyRouting(sess.Iface, old)
+	sess.PppUnit = u
+	m.db.Model(&models.Session{}).Where("id = ?", sess.Id).Update("ppp_unit", u)
+	log.Printf("[dial] session %d: ppp%d đang bị tiến trình khác giữ → đổi sang ppp%d", sess.Id, old, u)
+	activity.Warn(activity.CategoryDial, "ppp_unit_reassigned",
+		fmt.Sprintf("Session #%d: ppp%d đang bị tiến trình khác giữ, đổi sang ppp%d", sess.Id, old, u),
+		activity.SessionId(sess.Id), activity.F("old_unit", old), activity.F("new_unit", u))
+	return nil
+}
+
+// unitOwner — tên peer (bp-sess-N) của pppd đang giữ ppp<unit>, đọc từ
+// /run/ppp<unit>.pid → /proc/<pid>/cmdline. "" nếu không xác định được.
+func unitOwner(unit int) string {
+	b, err := os.ReadFile(fmt.Sprintf("/run/ppp%d.pid", unit))
+	if err != nil {
+		return ""
+	}
+	pid := strings.TrimSpace(strings.SplitN(string(b), "\n", 2)[0])
+	cmd, err := os.ReadFile("/proc/" + pid + "/cmdline")
+	if err != nil {
+		return ""
+	}
+	args := strings.Split(string(cmd), "\x00")
+	for i, a := range args {
+		if a == "call" && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+// ifaceExists — var để test thay (máy chạy test có thể có sẵn ppp0..N).
+var ifaceExists = func(name string) bool {
+	_, err := os.Stat("/sys/class/net/" + name)
+	return err == nil
 }
 
 // Rotate — hangup → sleep BRAS settle → dial. Trả old_ip / new_ip.
@@ -427,7 +514,150 @@ func (m *Manager) reconcileOnce() {
 		go m.reconcileApply(s.Id, act, liveIP)
 	}
 
+	// Nhận lại TRƯỚC khi reconnect: Dial sẽ ngắt pppd cũ → giết mất link đang sống
+	// (khách bị đổi IP) chỉ vì DB ghi sai trạng thái.
+	m.adoptLiveErrorSessions()
 	m.reconnectErrorSessions()
+}
+
+// adoptDecision — hàm THUẦN: session đang error/disconnected nhưng pppd CỦA CHÍNH
+// NÓ vẫn giữ link sống có IP dùng được → nhận lại unit nào.
+//
+//	units: các ppp unit do pppd của session giữ. dbUnit: ppp_unit trong DB.
+//	takenByOther(u): u là ppp_unit của session KHÁC (đổi sang sẽ đụng UNIQUE và
+//	giẫm proxy của session đó). ipOf(u): IPv4 trên ppp<u> ("" nếu không UP).
+func adoptDecision(units []int, dbUnit int, takenByOther func(int) bool, ipOf func(int) string, blocked func(string) bool) (int, string, bool) {
+	order := make([]int, 0, len(units))
+	for _, u := range units { // ưu tiên đúng unit trong DB (không phải đổi gì)
+		if u == dbUnit {
+			order = append(order, u)
+		}
+	}
+	for _, u := range units {
+		if u != dbUnit {
+			order = append(order, u)
+		}
+	}
+	for _, u := range order {
+		if u != dbUnit && takenByOther(u) {
+			continue
+		}
+		ip := ipOf(u)
+		if ip == "" || blocked(ip) {
+			continue
+		}
+		return u, ip, true
+	}
+	return 0, "", false
+}
+
+// liveUnitsByPeer — quét /run/ppp<N>.pid → peer (bp-sess-X) → các unit đang giữ.
+func liveUnitsByPeer() map[string][]int {
+	out := map[string][]int{}
+	files, _ := filepath.Glob("/run/ppp*.pid")
+	for _, f := range files {
+		n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), "ppp"), ".pid"))
+		if err != nil {
+			continue // ppp-<linkname>.pid
+		}
+		if owner := unitOwner(n); owner != "" {
+			out[owner] = append(out[owner], n)
+		}
+	}
+	return out
+}
+
+// adoptLiveErrorSessions — DB ghi error/disconnected nhưng pppd `persist` của
+// session đã TỰ nối lại (BRAS chập xong) → đánh dấu connected, giữ nguyên IP.
+// proxy3 13/10/2026: 38 session error, 20 cái link riêng vẫn sống IP thật (6 có
+// khách) — Central không cấp, khách tưởng proxy chết; reconnect thì đổi IP.
+func (m *Manager) adoptLiveErrorSessions() {
+	var errs []models.Session
+	m.db.Where("status IN (?, ?)", models.StatusError, models.StatusDisconnected).Find(&errs)
+	if len(errs) == 0 {
+		return
+	}
+	live := liveUnitsByPeer()
+	var all []models.Session
+	m.db.Select("id", "ppp_unit").Find(&all)
+	unitOf := make(map[int]uint, len(all))
+	for _, s := range all {
+		unitOf[s.PppUnit] = s.Id
+	}
+	ipOf := func(u int) string {
+		n := fmt.Sprintf("ppp%d", u)
+		if !IsIfaceUp(n) {
+			return ""
+		}
+		return IfaceIPv4(n)
+	}
+	budget := reconcileCapPerTick
+	for _, s := range errs {
+		units := live[fmt.Sprintf("bp-sess-%d", s.Id)]
+		if len(units) == 0 {
+			continue
+		}
+		sid := s.Id
+		u, ip, ok := adoptDecision(units, s.PppUnit, func(u int) bool {
+			id, found := unitOf[u]
+			return found && id != sid
+		}, ipOf, IsBlockedISPIp)
+		if !ok {
+			continue
+		}
+		if budget <= 0 {
+			break
+		}
+		budget--
+		// ĐỒNG BỘ (không goroutine): reconnectErrorSessions chạy ngay sau phải thấy
+		// session đã connected, nếu không nó Dial → ngắt mất link đang sống.
+		m.adoptApply(sid, u, ip)
+	}
+}
+
+func (m *Manager) adoptApply(sid uint, unit int, ip string) {
+	muIf, _ := m.rotateMu.LoadOrStore(sid, &sync.Mutex{})
+	mu := muIf.(*sync.Mutex)
+	if !mu.TryLock() {
+		return // đang rotate/dial — để tick sau
+	}
+	defer mu.Unlock()
+
+	var s models.Session
+	if err := m.db.First(&s, sid).Error; err != nil || s.Status == models.StatusConnected || s.Status == models.StatusDialing {
+		return
+	}
+	iface := fmt.Sprintf("ppp%d", unit)
+	if unitOwner(unit) != fmt.Sprintf("bp-sess-%d", sid) || IfaceIPv4(iface) != ip {
+		return // đổi giữa chừng — tick sau xét lại
+	}
+	if s.PppUnit != unit {
+		// table policy-routing theo unit cũ là của session này → dọn trước khi đổi unit
+		RemoveReplyRouting(s.Iface, s.PppUnit)
+	}
+	if err := ApplyReplyRouting(iface, ip, unit); err != nil {
+		log.Printf("[adopt] session %d apply reply routing failed: %v", sid, err)
+	}
+	now := time.Now()
+	m.db.Model(&models.Session{}).Where("id = ?", sid).Updates(map[string]any{
+		"status":             models.StatusConnected,
+		"iface":              iface,
+		"ip":                 ip,
+		"ppp_unit":           unit,
+		"last_error":         "",
+		"reconnect_attempts": 0,
+		"next_reconnect_at":  nil,
+		"connected_at":       &now,
+	})
+	m.publish("session.status", map[string]any{
+		"session_id": sid, "status": models.StatusConnected, "iface": iface, "ip": ip,
+	})
+	log.Printf("[adopt] session %d: link riêng %s vẫn sống (IP %s) → connected", sid, iface, ip)
+	activity.Info(activity.CategoryWatchdog, "adopt_live_link",
+		fmt.Sprintf("Session #%d: pppd đã tự nối lại trên %s (IP %s) — nhận lại, giữ nguyên IP", sid, iface, ip),
+		activity.SessionId(sid), activity.LineId(s.LineId), activity.F("iface", iface), activity.F("ip", ip),
+		activity.F("old_status", s.Status), activity.F("old_unit", s.PppUnit))
+	go m.probePublicIP(sid, iface)
 }
 
 // reconcileApply — thực thi 1 hành động reconcile (chạy trong goroutine). Khoá
@@ -600,6 +830,7 @@ func (m *Manager) EnsurePhysicalNICsUp() {
 
 // RestoreState — boot: dial pending sessions (status=connected nhưng iface không UP).
 func (m *Manager) RestoreState() {
+	EnsureSecrets(m.db)
 	var sessions []models.Session
 	m.db.Where("status IN (?, ?)", models.StatusConnected, models.StatusDialing).Find(&sessions)
 	for _, s := range sessions {
@@ -660,39 +891,57 @@ func ensureMacvlan(parent, name, mac string) error {
 	return nil
 }
 
-// AllocPppUnit — tìm ppp_unit chưa dùng (0..999).
+// MaxUnit — số ppp unit tối đa của CẢ server (mọi line dùng chung dải
+// 0..MaxUnit-1). Env PPP_UNIT_MAX, đặt ở main.
+var MaxUnit = 2048
+
+// AllocMu — serialize cấp ppp_unit (+ cổng proxy phía api) giữa tạo session và
+// cấp lại unit lúc Dial. Giữ khoá từ lúc chọn unit tới lúc ghi DB.
+var AllocMu sync.Mutex
+
+// AllocPppUnit — unit trống cả trong DB lẫn kernel (pppd ngoài DB — trùng/mồ
+// côi — có thể đang giữ ppp<u>). Caller phải nắm AllocMu.
 func AllocPppUnit(db *gorm.DB) (int, error) {
-	for u := 0; u < 1000; u++ {
-		var n int64
-		db.Model(&models.Session{}).Where("ppp_unit = ?", u).Count(&n)
-		if n == 0 {
-			return u, nil
+	var used []int
+	db.Model(&models.Session{}).Pluck("ppp_unit", &used)
+	taken := make(map[int]bool, len(used))
+	for _, u := range used {
+		taken[u] = true
+	}
+	for u := 0; u < MaxUnit; u++ {
+		if taken[u] || ifaceExists(fmt.Sprintf("ppp%d", u)) {
+			continue
 		}
+		return u, nil
 	}
-	return 0, fmt.Errorf("no free ppp_unit")
+	return 0, fmt.Errorf("server hết ppp unit: cả %d unit (0..%d) đang dùng — tăng PPP_UNIT_MAX trong /etc/default/bestphone-pppoe", MaxUnit, MaxUnit-1)
 }
 
-func truncate(s string, n int) string {
-	if len(s) <= n {
+// headTail — giữ đầu + CUỐI log. Lý do thất bại của pppd nằm ở cuối; bản cũ
+// cắt 500 ký tự đầu nên chỉ còn PADI/PADO của máy khác cùng L2.
+func headTail(s string, head, tail int) string {
+	if len(s) <= head+tail {
 		return s
 	}
-	return s[:n]
-}
-
-func truncateStr(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
+	return s[:head] + "\n…\n" + s[len(s)-tail:]
 }
 
 // classifyPppdError — extract short hint từ pppd verbose log.
 // Helper để DB last_error ngắn gọn + user dễ debug.
+//
+// Thứ tự quan trọng: output có cả gói discovery của máy KHÁC cùng L2 (PADI/PADT
+// broadcast), nên ưu tiên các thông điệp kết luận của chính pppd trước.
 func classifyPppdError(raw string) string {
 	low := strings.ToLower(raw)
 	switch {
 	case strings.Contains(low, "authnak"), strings.Contains(low, "authentication failed"):
 		return "AuthNak (cred không khớp BRAS)"
+	case strings.Contains(low, "timeout waiting for pado"), strings.Contains(low, "unable to complete pppoe discovery"):
+		return "No PADO (BRAS không trả lời PADI)"
+	case strings.Contains(low, "timeout waiting for pads"):
+		return "No PADS (BRAS không xác nhận phiên)"
+	case strings.Contains(low, "lcp terminated by peer"):
+		return "LCP terminated by peer (BRAS ngắt phiên)"
 	case strings.Contains(low, "service-name") && strings.Contains(low, "padt"):
 		return "PADT (BRAS terminate session)"
 	case strings.Contains(low, "no service") || strings.Contains(low, "service-name unmatched"):
@@ -709,7 +958,11 @@ func classifyPppdError(raw string) string {
 	case strings.Contains(low, "no buffer space"):
 		return "kernel buffer full"
 	default:
-		// Fallback: cắt 200 ký tự
-		return truncate(strings.ReplaceAll(raw, "\n", " | "), 200)
+		// Fallback: 200 ký tự CUỐI (đầu log chỉ là discovery, thường là của máy khác)
+		s := strings.ReplaceAll(strings.TrimSpace(raw), "\n", " | ")
+		if len(s) > 200 {
+			s = "…" + s[len(s)-200:]
+		}
+		return s
 	}
 }

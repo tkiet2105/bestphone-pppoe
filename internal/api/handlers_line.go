@@ -52,8 +52,10 @@ func CreateLine(c *gin.Context) {
 		fail(c, 400, err.Error())
 		return
 	}
+	// Số proxy tối đa của line = ĐÚNG số admin đặt: không tự ép mặc định, không cắt trần.
 	if req.MaxSessions <= 0 {
-		req.MaxSessions = 8
+		fail(c, 400, "max_sessions phải >= 1 (số session/proxy tối đa của line)")
+		return
 	}
 	normalizedMacs, err := normalizeAndValidateMacs(req.CustomMacs)
 	if err != nil {
@@ -116,6 +118,10 @@ func UpdateLine(c *gin.Context) {
 		line.UseMacvlan = *req.UseMacvlan
 	}
 	if req.MaxSessions != nil {
+		if *req.MaxSessions <= 0 {
+			fail(c, 400, "max_sessions phải >= 1 (số session/proxy tối đa của line)")
+			return
+		}
 		line.MaxSessions = *req.MaxSessions
 	}
 	if req.CustomMacs != nil {
@@ -156,6 +162,14 @@ func GetLine(c *gin.Context) {
 	ok(c, line)
 }
 
+func sessionUsernames(ss []models.Session) []string {
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		out = append(out, s.Username)
+	}
+	return out
+}
+
 // DeleteLine — cascade: hangup + remove peer + remove proxy listener + DB.
 func DeleteLine(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
@@ -172,10 +186,19 @@ func DeleteLine(c *gin.Context) {
 		_ = pppoe.M.Hangup(s.Id)
 		pppoe.RemovePeerFile(s.Id)
 		pppoe.RemoveMacvlan(s.Id)
-		pppoe.RemoveSessionSecrets(s.Username)
 		db.DB.Delete(&s)
 	}
+	var line models.Line
+	db.DB.First(&line, id)
 	db.DB.Delete(&models.Line{}, id)
+	// SAU khi xoá DB: gỡ secret của các tài khoản không còn ai dùng.
+	seen := map[string]bool{}
+	for _, u := range append([]string{line.Username}, sessionUsernames(sessions)...) {
+		if u != "" && !seen[u] {
+			seen[u] = true
+			pppoe.RemoveSessionSecrets(db.DB, u)
+		}
+	}
 	activity.Warn(activity.CategoryLine, "delete",
 		fmt.Sprintf("Xóa line #%d và %d session liên quan", id, len(sessions)),
 		activity.LineId(uint(id)), activity.ClientIP(c.ClientIP()),
