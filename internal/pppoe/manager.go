@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -512,7 +514,150 @@ func (m *Manager) reconcileOnce() {
 		go m.reconcileApply(s.Id, act, liveIP)
 	}
 
+	// Nhận lại TRƯỚC khi reconnect: Dial sẽ ngắt pppd cũ → giết mất link đang sống
+	// (khách bị đổi IP) chỉ vì DB ghi sai trạng thái.
+	m.adoptLiveErrorSessions()
 	m.reconnectErrorSessions()
+}
+
+// adoptDecision — hàm THUẦN: session đang error/disconnected nhưng pppd CỦA CHÍNH
+// NÓ vẫn giữ link sống có IP dùng được → nhận lại unit nào.
+//
+//	units: các ppp unit do pppd của session giữ. dbUnit: ppp_unit trong DB.
+//	takenByOther(u): u là ppp_unit của session KHÁC (đổi sang sẽ đụng UNIQUE và
+//	giẫm proxy của session đó). ipOf(u): IPv4 trên ppp<u> ("" nếu không UP).
+func adoptDecision(units []int, dbUnit int, takenByOther func(int) bool, ipOf func(int) string, blocked func(string) bool) (int, string, bool) {
+	order := make([]int, 0, len(units))
+	for _, u := range units { // ưu tiên đúng unit trong DB (không phải đổi gì)
+		if u == dbUnit {
+			order = append(order, u)
+		}
+	}
+	for _, u := range units {
+		if u != dbUnit {
+			order = append(order, u)
+		}
+	}
+	for _, u := range order {
+		if u != dbUnit && takenByOther(u) {
+			continue
+		}
+		ip := ipOf(u)
+		if ip == "" || blocked(ip) {
+			continue
+		}
+		return u, ip, true
+	}
+	return 0, "", false
+}
+
+// liveUnitsByPeer — quét /run/ppp<N>.pid → peer (bp-sess-X) → các unit đang giữ.
+func liveUnitsByPeer() map[string][]int {
+	out := map[string][]int{}
+	files, _ := filepath.Glob("/run/ppp*.pid")
+	for _, f := range files {
+		n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), "ppp"), ".pid"))
+		if err != nil {
+			continue // ppp-<linkname>.pid
+		}
+		if owner := unitOwner(n); owner != "" {
+			out[owner] = append(out[owner], n)
+		}
+	}
+	return out
+}
+
+// adoptLiveErrorSessions — DB ghi error/disconnected nhưng pppd `persist` của
+// session đã TỰ nối lại (BRAS chập xong) → đánh dấu connected, giữ nguyên IP.
+// proxy3 13/10/2026: 38 session error, 20 cái link riêng vẫn sống IP thật (6 có
+// khách) — Central không cấp, khách tưởng proxy chết; reconnect thì đổi IP.
+func (m *Manager) adoptLiveErrorSessions() {
+	var errs []models.Session
+	m.db.Where("status IN (?, ?)", models.StatusError, models.StatusDisconnected).Find(&errs)
+	if len(errs) == 0 {
+		return
+	}
+	live := liveUnitsByPeer()
+	var all []models.Session
+	m.db.Select("id", "ppp_unit").Find(&all)
+	unitOf := make(map[int]uint, len(all))
+	for _, s := range all {
+		unitOf[s.PppUnit] = s.Id
+	}
+	ipOf := func(u int) string {
+		n := fmt.Sprintf("ppp%d", u)
+		if !IsIfaceUp(n) {
+			return ""
+		}
+		return IfaceIPv4(n)
+	}
+	budget := reconcileCapPerTick
+	for _, s := range errs {
+		units := live[fmt.Sprintf("bp-sess-%d", s.Id)]
+		if len(units) == 0 {
+			continue
+		}
+		sid := s.Id
+		u, ip, ok := adoptDecision(units, s.PppUnit, func(u int) bool {
+			id, found := unitOf[u]
+			return found && id != sid
+		}, ipOf, IsBlockedISPIp)
+		if !ok {
+			continue
+		}
+		if budget <= 0 {
+			break
+		}
+		budget--
+		// ĐỒNG BỘ (không goroutine): reconnectErrorSessions chạy ngay sau phải thấy
+		// session đã connected, nếu không nó Dial → ngắt mất link đang sống.
+		m.adoptApply(sid, u, ip)
+	}
+}
+
+func (m *Manager) adoptApply(sid uint, unit int, ip string) {
+	muIf, _ := m.rotateMu.LoadOrStore(sid, &sync.Mutex{})
+	mu := muIf.(*sync.Mutex)
+	if !mu.TryLock() {
+		return // đang rotate/dial — để tick sau
+	}
+	defer mu.Unlock()
+
+	var s models.Session
+	if err := m.db.First(&s, sid).Error; err != nil || s.Status == models.StatusConnected || s.Status == models.StatusDialing {
+		return
+	}
+	iface := fmt.Sprintf("ppp%d", unit)
+	if unitOwner(unit) != fmt.Sprintf("bp-sess-%d", sid) || IfaceIPv4(iface) != ip {
+		return // đổi giữa chừng — tick sau xét lại
+	}
+	if s.PppUnit != unit {
+		// table policy-routing theo unit cũ là của session này → dọn trước khi đổi unit
+		RemoveReplyRouting(s.Iface, s.PppUnit)
+	}
+	if err := ApplyReplyRouting(iface, ip, unit); err != nil {
+		log.Printf("[adopt] session %d apply reply routing failed: %v", sid, err)
+	}
+	now := time.Now()
+	m.db.Model(&models.Session{}).Where("id = ?", sid).Updates(map[string]any{
+		"status":             models.StatusConnected,
+		"iface":              iface,
+		"ip":                 ip,
+		"ppp_unit":           unit,
+		"last_error":         "",
+		"reconnect_attempts": 0,
+		"next_reconnect_at":  nil,
+		"connected_at":       &now,
+	})
+	m.publish("session.status", map[string]any{
+		"session_id": sid, "status": models.StatusConnected, "iface": iface, "ip": ip,
+	})
+	log.Printf("[adopt] session %d: link riêng %s vẫn sống (IP %s) → connected", sid, iface, ip)
+	activity.Info(activity.CategoryWatchdog, "adopt_live_link",
+		fmt.Sprintf("Session #%d: pppd đã tự nối lại trên %s (IP %s) — nhận lại, giữ nguyên IP", sid, iface, ip),
+		activity.SessionId(sid), activity.LineId(s.LineId), activity.F("iface", iface), activity.F("ip", ip),
+		activity.F("old_status", s.Status), activity.F("old_unit", s.PppUnit))
+	go m.probePublicIP(sid, iface)
 }
 
 // reconcileApply — thực thi 1 hành động reconcile (chạy trong goroutine). Khoá

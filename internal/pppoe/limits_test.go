@@ -118,3 +118,30 @@ Unable to complete PPPoE Discovery`
 		t.Fatalf("headTail phải giữ phần cuối, got %q", got)
 	}
 }
+
+func TestAdoptDecision(t *testing.T) {
+	ips := map[int]string{3: "42.113.91.76", 5: "169.254.252.1", 7: "113.22.68.18", 9: ""}
+	ipOf := func(u int) string { return ips[u] }
+	taken := func(u int) bool { return u == 7 } // ppp7 là ppp_unit của session khác
+
+	// đúng unit DB, IP thật → nhận lại
+	if u, ip, ok := adoptDecision([]int{3}, 3, taken, ipOf, IsBlockedISPIp); !ok || u != 3 || ip != "42.113.91.76" {
+		t.Fatalf("unit DB sống: got %d %s %v", u, ip, ok)
+	}
+	// pppd tự nối lại ở unit khác còn trống → nhận unit đó
+	if u, _, ok := adoptDecision([]int{3}, 12, taken, ipOf, IsBlockedISPIp); !ok || u != 3 {
+		t.Fatalf("unit lệch nhưng trống: got %d %v", u, ok)
+	}
+	// unit lệch đang là của session khác → KHÔNG nhận (đụng UNIQUE, giẫm proxy người khác)
+	if _, _, ok := adoptDecision([]int{7}, 12, taken, ipOf, IsBlockedISPIp); ok {
+		t.Fatal("không được nhận unit của session khác")
+	}
+	// IP 169.254 / chưa có IP → không nhận
+	if _, _, ok := adoptDecision([]int{5, 9}, 5, taken, ipOf, IsBlockedISPIp); ok {
+		t.Fatal("IP link-local hoặc rỗng không được nhận")
+	}
+	// pppd đôi: ưu tiên unit trùng DB
+	if u, _, ok := adoptDecision([]int{3, 7}, 7, func(int) bool { return false }, ipOf, IsBlockedISPIp); !ok || u != 7 {
+		t.Fatalf("phải ưu tiên unit DB, got %d", u)
+	}
+}
